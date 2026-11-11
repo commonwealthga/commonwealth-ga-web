@@ -77,14 +77,30 @@ a restart, no build.
 
 ## The image registry
 
-The VPS pulls `ghcr.io/commonwealthga/commonwealth-ga-web:<sha>` anonymously — no
-`docker login` anywhere — so **the package must be public**. GitHub creates org
-packages private regardless of the repository's visibility, and the failure mode
-is a bare `unauthorized` from the daemon after the edge has already pulled.
+The package `ghcr.io/commonwealthga/commonwealth-ga-web` is **private** — it holds
+the compiled binaries, and keeping it private avoids handing out a ready-to-run
+copy of the site. GitHub creates organisation packages private by default
+anyway, whatever the repository's visibility.
 
-The deploy workflow checks this before touching the server, so a private package
-fails the run immediately with the fix in the message. To fix it by hand:
-Packages → *commonwealth-ga-web* → Package settings → Change visibility → Public.
+Pulling it therefore needs a credential, and the deploy supplies one without
+storing anything:
+
+- the deploy job declares `permissions: packages: read`, so its own
+  `GITHUB_TOKEN` can read the package;
+- it copies that token to the VPS through the SSH stdin script (never argv, so
+  it does not show in `ps`), and logs in with `--config` pointed at a `mktemp -d`
+  directory that a `trap` deletes on exit.
+
+The result: `/home/zax/.docker/config.json` is never written, and the credential
+expires with the workflow run — there is no registry secret to rotate and nothing
+to revoke after a leak beyond the run itself.
+
+If a pull ever fails with `unauthorized`, the token could not read the package:
+check that the job still has `packages: read`, and that the package is linked to
+this repository (Packages → *commonwealth-ga-web* → settings → *Manage access*).
+
+`start = false` deploys now also `docker compose pull` without starting anything,
+which proves the credential works while the currently live site keeps its ports.
 
 ## Certificates
 

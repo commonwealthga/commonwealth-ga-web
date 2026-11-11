@@ -73,35 +73,25 @@ jobs:
     if: ${{ always() && (needs.build.result == 'success' || startsWith(inputs.deploy, 'previous')) }}
     runs-on: ubuntu-latest
     environment: production
+    permissions:
+      contents: read
+      # The image is private; the same token pulls it on the VPS.
+      packages: read
     steps:
       # The release tarball and the compose template both come from the repo,
       # and this job does not inherit the build job's workspace. A rollback
       # needs neither, so only check out when there is something to upload.
-      - name: Check the image is anonymously pullable
+      - name: Check the image pulls with CI's token
         if: ${{ !startsWith(inputs.deploy, 'previous') }}
-        # GitHub creates organisation packages private, whatever the repo's own
-        # visibility. The VPS pulls without credentials, so a private package
-        # fails the deploy minutes later with a bare "unauthorized" from the
-        # daemon. Ask the registry anonymously here instead, and say what to fix.
+        # The package is private, so the pull happens with the job's own
+        # GITHUB_TOKEN (see `permissions` above). Prove that works here rather
+        # than discovering it on the VPS after the site is already down.
         run: |
           set -euo pipefail
-          REPO="${GITHUB_REPOSITORY,,}"
-          PKG="${GITHUB_REPOSITORY#*/}"
-          TAG="${{ needs.build.outputs.tag }}"
-          if ! TOKEN=$(curl -fsSL "https://ghcr.io/token?scope=repository:$REPO:pull&service=ghcr.io" 2>/dev/null \
-              | sed -n 's/.*"token":"\([^"]*\)".*/\1/p') || [ -z "$TOKEN" ]; then
-            echo "::error::ghcr.io/$REPO refused an anonymous pull token. Make the package public: Packages → $PKG → Package settings → Change visibility → Public."
-            exit 1
-          fi
-          CODE=$(curl -s -o /dev/null -w '%{http_code}' \
-            -H "Authorization: Bearer $TOKEN" \
-            -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json' \
-            "https://ghcr.io/v2/$REPO/manifests/$TAG")
-          if [ "$CODE" != "200" ]; then
-            echo "::error::Manifest $TAG is not anonymously pullable (HTTP $CODE). Make the package public: Packages → $PKG → Package settings → Change visibility → Public."
-            exit 1
-          fi
-          echo "Manifest $TAG is anonymously pullable."
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker manifest inspect "ghcr.io/${{ github.repository }}:${{ needs.build.outputs.tag }}" > /dev/null
+          echo "Pullable as ${{ github.actor }}."
 
       - name: Setup SSH
         run: |
@@ -158,6 +148,16 @@ jobs:
             fi
             TARGET="${RELS[$TIDX]}"
             echo "Rolling back: $CUR -> $TARGET"
+            # The package is private. Log in with the job's own token and a
+            # throwaway config directory: nothing is written to the box's
+            # docker config, and the credential expires with the run. There is
+            # no long-lived registry secret to store or rotate.
+            DOCKERCFG=$(mktemp -d)
+            trap 'rm -rf "$DOCKERCFG"' EXIT
+            printf '%s' '${{ secrets.GITHUB_TOKEN }}' \
+              | docker login ghcr.io -u '${{ github.actor }}' --password-stdin --config "$DOCKERCFG" >/dev/null
+            export DOCKER_CONFIG="$DOCKERCFG"
+
             ln -sfn "$BASE/releases/$TARGET" "$BASE/current"
             cd "$BASE/current"
             # Both profiles: `edge` for Caddy, `snapshot` for the snapshotter.
@@ -219,7 +219,21 @@ jobs:
             # tag.
             printf 'WEB_IMAGE=%s\nWEB_IMAGE_TAG=%s\n' "$IMAGE" "$TAG" > "$REL/.env"
 
+            # The package is private. Log in with the job's own token and a
+            # throwaway config directory: nothing is written to the box's
+            # docker config, and the credential expires with the run. There is
+            # no long-lived registry secret to store or rotate.
+            DOCKERCFG=$(mktemp -d)
+            trap 'rm -rf "$DOCKERCFG"' EXIT
+            printf '%s' '${{ secrets.GITHUB_TOKEN }}' \
+              | docker login ghcr.io -u '${{ github.actor }}' --password-stdin --config "$DOCKERCFG" >/dev/null
+            export DOCKER_CONFIG="$DOCKERCFG"
+
             if [ "${START:-true}" != "true" ]; then
+              # Pull the images even though nothing starts: ports stay with
+              # whatever is live, and the release is proven pullable.
+              cd "$REL"
+              docker compose -p commonwealth-ga-web --profile edge --profile snapshot pull
               echo "Prepared $REL without starting it (start=false)."
               echo "current still points at: $(readlink -f "$BASE/current" || echo '(none)')"
               exit 0
