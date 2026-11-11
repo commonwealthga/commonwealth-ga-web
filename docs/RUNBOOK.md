@@ -119,7 +119,18 @@ certbot's original `standalone` authenticator needs that port to itself: once
 Caddy is listening, a standalone renewal fails silently and the certificate
 expires unwatched.
 
-One-time switch, **after** the edge is serving port 80:
+One-time switch, **after** the edge is serving port 80. It is a script, so it is
+one command and repeatable rather than a pasted block:
+
+```bash
+sudo ~/website/current/scripts/enable-cert-renewal.sh --verify
+```
+
+It creates the webroot, writes the reload hook, rewrites the renewal config in
+place (keeping `$CONF.bak`), prints the result, and with `--verify` runs
+`certbot renew --dry-run`. Running it twice changes nothing.
+
+What it does, for reference:
 
 ```bash
 # The webroot Caddy serves /.well-known/acme-challenge/* from.
