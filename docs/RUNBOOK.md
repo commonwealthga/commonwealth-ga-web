@@ -118,20 +118,50 @@ down or its `http://:80` block is missing, which is the point.
 
 ## fail2ban
 
-`/etc/fail2ban/jail.local` sets `bantime = 1h`, `findtime = 10m`, with
-`banaction = nftables` from `jail.d/defaults-debian.conf`, and no `maxretry` of
-its own — so `[sshd]` inherits `jail.conf`'s **5**, and a burst of SSH
-connections (a deploy makes ~14) earns an hour of `Connection refused` for
-whatever IP made them.
+`/etc/fail2ban/jail.local` on the box is stricter than Debian's defaults:
+
+```ini
+[DEFAULT]
+ignoreip = 127.0.0.1/8 ::1
+bantime  = 1h
+findtime = 10m
+maxretry = 4
+bantime.increment = true
+bantime.maxtime   = 1w
+
+[sshd]
+enabled = true
+port    = 554
+mode    = aggressive
+backend = systemd
+```
+
+`mode = aggressive` with `maxretry = 4` and incrementing bans (up to a week) is
+what a burst of SSH connections runs into — a deploy makes about 14, and a
+handful of back-to-back `ssh` commands is enough. The symptom is
+`Connection refused`, which looks like the host is down while the site keeps
+serving normally.
+
+Relax it for `sshd` by adding the key **inside the existing `[sshd]` section**.
+A second `[sshd]` block is a parse error: `systemctl reload fail2ban` exits 255,
+the daemon keeps running its old config, and nothing tells you beyond that exit
+code.
 
 ```bash
+sudo cp /etc/fail2ban/jail.local{,.bak}
+sudoedit /etc/fail2ban/jail.local        # add  maxretry = 20  under [sshd]
+sudo fail2ban-client -t                  # parse test — before reloading
+sudo systemctl reload fail2ban
 sudo fail2ban-client status sshd
+```
+
+Lifting a ban:
+
+```bash
+sudo fail2ban-client status sshd                 # see banned IPs
 sudo fail2ban-client set sshd unbanip <ip>
 ```
 
-Worth raising, given key-only auth:
-
-```bash
-printf '\n[sshd]\nmaxretry = 20\nfindtime = 10m\n' | sudo tee -a /etc/fail2ban/jail.local
-sudo systemctl reload fail2ban
-```
+Bans increment (`bantime.increment`), so a repeat offender waits longer than an
+hour and up to `bantime.maxtime` — worth unbanning your own address rather than
+waiting it out.
