@@ -36,8 +36,8 @@
 		{
 			title: 'This website',
 			body: 'Rust API, server-sent live updates and a SvelteKit frontend. Source-available rather than open source — contributions welcome, reuse for another community is not.',
-			href: 'https://github.com/commonwealthga/commonwealth-ga-website',
-			cta: 'commonwealth-ga-website'
+			href: 'https://github.com/commonwealthga/commonwealth-ga-web',
+			cta: 'commonwealth-ga-web'
 		}
 	];
 </script>
