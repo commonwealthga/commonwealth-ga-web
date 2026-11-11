@@ -77,11 +77,31 @@ jobs:
       # The release tarball and the compose template both come from the repo,
       # and this job does not inherit the build job's workspace. A rollback
       # needs neither, so only check out when there is something to upload.
-      - name: Checkout
+      - name: Check the image is anonymously pullable
         if: ${{ !startsWith(inputs.deploy, 'previous') }}
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.deploy }}
+        # GitHub creates organisation packages private, whatever the repo's own
+        # visibility. The VPS pulls without credentials, so a private package
+        # fails the deploy minutes later with a bare "unauthorized" from the
+        # daemon. Ask the registry anonymously here instead, and say what to fix.
+        run: |
+          set -euo pipefail
+          REPO="${GITHUB_REPOSITORY,,}"
+          PKG="${GITHUB_REPOSITORY#*/}"
+          TAG="${{ needs.build.outputs.tag }}"
+          if ! TOKEN=$(curl -fsSL "https://ghcr.io/token?scope=repository:$REPO:pull&service=ghcr.io" 2>/dev/null \
+              | sed -n 's/.*"token":"\([^"]*\)".*/\1/p') || [ -z "$TOKEN" ]; then
+            echo "::error::ghcr.io/$REPO refused an anonymous pull token. Make the package public: Packages → $PKG → Package settings → Change visibility → Public."
+            exit 1
+          fi
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $TOKEN" \
+            -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json' \
+            "https://ghcr.io/v2/$REPO/manifests/$TAG")
+          if [ "$CODE" != "200" ]; then
+            echo "::error::Manifest $TAG is not anonymously pullable (HTTP $CODE). Make the package public: Packages → $PKG → Package settings → Change visibility → Public."
+            exit 1
+          fi
+          echo "Manifest $TAG is anonymously pullable."
 
       - name: Setup SSH
         run: |

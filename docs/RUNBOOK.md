@@ -75,6 +75,17 @@ cd ~/public && docker compose -p public up -d
 Or, staying on the new stack, deploy with `deploy=previous` — a symlink flip plus
 a restart, no build.
 
+## The image registry
+
+The VPS pulls `ghcr.io/commonwealthga/commonwealth-ga-web:<sha>` anonymously — no
+`docker login` anywhere — so **the package must be public**. GitHub creates org
+packages private regardless of the repository's visibility, and the failure mode
+is a bare `unauthorized` from the daemon after the edge has already pulled.
+
+The deploy workflow checks this before touching the server, so a private package
+fails the run immediately with the fix in the message. To fix it by hand:
+Packages → *commonwealth-ga-web* → Package settings → Change visibility → Public.
+
 ## Certificates
 
 The edge reads `/etc/letsencrypt/live/commonwealth.ydns.eu/{fullchain,privkey}.pem`
