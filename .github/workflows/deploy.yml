@@ -1,0 +1,209 @@
+name: Deploy
+
+# Button-deploy to the VPS. The image is built here and pushed to GHCR; the VPS
+# only pulls, so a deploy is a pull + container swap instead of a multi-minute
+# Rust compile on the game server's machine.
+#
+# Layout on the server:
+#   ~/website/releases/<utc-stamp>-<short-sha>/   compose files + .env (image tag)
+#   ~/website/current -> releases/...             symlink, flipped atomically
+#   ~/website/site-data/                          website-owned writable data
+# Each release dir pins the image tag it was built from in `.env`, which is what
+# makes rollback just a symlink flip.
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: 'Git ref to deploy (branch/tag/SHA), or rollback alias: previous, previous-N (N releases back from the one currently live)'
+        required: false
+        type: string
+        default: 'master'
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  build:
+    if: ${{ !startsWith(inputs.deploy, 'previous') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      tag: ${{ steps.rev.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.deploy }}
+
+      - id: rev
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.rev.outputs.sha }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: [build]
+    # A rollback needs no build, so it still runs when `build` is skipped.
+    if: ${{ always() && (needs.build.result == 'success' || startsWith(inputs.deploy, 'previous')) }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Setup SSH
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          echo "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<EOF
+          Host gadeploy
+            HostName ${{ secrets.DEPLOY_HOST }}
+            Port ${{ secrets.DEPLOY_PORT }}
+            User ${{ secrets.DEPLOY_USER }}
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            UserKnownHostsFile ~/.ssh/known_hosts
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Roll back to an earlier release
+        if: startsWith(inputs.deploy, 'previous')
+        run: |
+          set -euo pipefail
+          INPUT="${{ inputs.deploy }}"
+          if [ "$INPUT" = "previous" ]; then
+            N=1
+          else
+            N="${INPUT#previous-}"
+            if ! [[ "$N" =~ ^[0-9]+$ ]]; then
+              echo "::error::Invalid alias '$INPUT'. Use previous or previous-N."
+              exit 1
+            fi
+          fi
+          ssh gadeploy bash -s -- "$N" <<'REMOTE_SCRIPT'
+            set -euo pipefail
+            N="$1"
+            BASE="$HOME/website"
+            CUR=$(basename "$(readlink "$BASE/current")")
+            # Release dirs are named <utc-stamp>-<sha>, so name order == age.
+            mapfile -t RELS < <(ls -1 "$BASE/releases" | sort -r)
+            IDX=-1
+            for i in "${!RELS[@]}"; do
+              [ "${RELS[$i]}" = "$CUR" ] && IDX=$i && break
+            done
+            if [ "$IDX" -lt 0 ]; then
+              echo "::error::Current release '$CUR' not found in releases/"
+              exit 1
+            fi
+            TIDX=$((IDX + N))
+            if [ "$TIDX" -ge "${#RELS[@]}" ]; then
+              echo "::error::Not enough releases to go $N back from $CUR"
+              exit 1
+            fi
+            TARGET="${RELS[$TIDX]}"
+            echo "Rolling back: $CUR -> $TARGET"
+            ln -sfn "$BASE/releases/$TARGET" "$BASE/current"
+            cd "$BASE/current"
+            docker compose -p commonwealth-ga-web --profile edge pull
+            docker compose -p commonwealth-ga-web --profile edge up -d
+          REMOTE_SCRIPT
+
+      - name: Prepare release
+        if: ${{ !startsWith(inputs.deploy, 'previous') }}
+        run: |
+          set -euo pipefail
+          SHORT=$(echo "${{ needs.build.outputs.tag }}" | cut -c1-7)
+          STAMP=$(date -u +%Y%m%d-%H%M%S)
+          echo "RELEASE=$STAMP-$SHORT" >> "$GITHUB_ENV"
+          tar czf /tmp/site.tar.gz \
+            --exclude=.git --exclude=target --exclude=web/node_modules \
+            --exclude=web/build --exclude=web/.svelte-kit .
+          envsubst '${WEB_UID} ${WEB_GID} ${WEB_HOST_HOME} ${WEB_CONTROL_API_URL} ${WEB_CONTROL_API_TOKEN} ${WEB_DB_EXPORT_TOKEN}' \
+            < deploy/docker-compose.override.template.yml \
+            > /tmp/docker-compose.override.yml
+        env:
+          WEB_UID: ${{ vars.WEB_UID || '1000' }}
+          WEB_GID: ${{ vars.WEB_GID || '1000' }}
+          # Mount points live under the deploy account's home; keep the real
+          # username out of the public repo and derive it here.
+          WEB_HOST_HOME: /home/${{ secrets.DEPLOY_USER }}
+          # Optional: unset keeps the player-settings page read-only.
+          WEB_CONTROL_API_URL: ${{ vars.WEB_CONTROL_API_URL }}
+          WEB_CONTROL_API_TOKEN: ${{ secrets.WEB_CONTROL_API_TOKEN }}
+          WEB_DB_EXPORT_TOKEN: ${{ secrets.WEB_DB_EXPORT_TOKEN }}
+
+      - name: Upload release and switch over
+        if: ${{ !startsWith(inputs.deploy, 'previous') }}
+        env:
+          IMAGE_TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          set -euo pipefail
+          scp -q /tmp/site.tar.gz /tmp/docker-compose.override.yml gadeploy:/tmp/
+          ssh gadeploy bash -s -- "$RELEASE" "$IMAGE" "$IMAGE_TAG" <<'REMOTE_SCRIPT'
+            set -euo pipefail
+            NAME="$1"; IMAGE="$2"; TAG="$3"
+            BASE="$HOME/website"
+            REL="$BASE/releases/$NAME"
+            mkdir -p "$REL" "$BASE/site-data"
+            tar xzf /tmp/site.tar.gz -C "$REL"
+            mv /tmp/docker-compose.override.yml "$REL/docker-compose.override.yml"
+            rm -f /tmp/site.tar.gz
+
+            # The image tag lives in the release's .env, so rolling back is a
+            # symlink flip: the previous release directory already pins its own
+            # tag.
+            printf 'WEB_IMAGE=%s\nWEB_IMAGE_TAG=%s\n' "$IMAGE" "$TAG" > "$REL/.env"
+
+            ln -sfn "$REL" "$BASE/current"
+            cd "$BASE/current"
+            docker compose -p commonwealth-ga-web --profile edge pull
+            docker compose -p commonwealth-ga-web --profile edge up -d
+
+            # Keep the 8 newest releases plus whatever current points to.
+            CUR=$(basename "$(readlink "$BASE/current")")
+            cd "$BASE/releases"
+            PRUNE=$(ls -1 | sort -r | grep -vx "$CUR" | tail -n +9 || true)
+            if [ -n "$PRUNE" ]; then
+              echo "Pruning old releases:" $PRUNE
+              echo "$PRUNE" | xargs rm -rf --
+            fi
+          REMOTE_SCRIPT
+
+      - name: Health check
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 12); do
+            # 200 from the status endpoint, checked from inside the VPS so a
+            # DNS/proxy hiccup cannot mask a dead container.
+            if ssh gadeploy 'curl -skf --max-time 5 -o /dev/null https://127.0.0.1/api/status'; then
+              STATUS=$(ssh gadeploy 'curl -sk --max-time 5 https://127.0.0.1/api/status')
+              echo "Site is up: $STATUS"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::/api/status did not come up after deploy — roll back by re-running with deploy=previous"
+          ssh gadeploy 'docker logs --tail 50 $(docker ps -q -f name=commonwealth-ga-web-web-1) || true'
+          exit 1

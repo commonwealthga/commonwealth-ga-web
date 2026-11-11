@@ -1,0 +1,46 @@
+# Caddy edge for the Commonwealth site.
+#
+# The TLS certificates are the host's Let's Encrypt files. Caddy reads them once
+# at start, so a renewal needs this container restarted (certbot's deploy hook
+# does that). ACME itself is left to certbot: `auto_https off` and an explicit
+# `tls` pair per site.
+#
+# Everything is driven by environment variables so this file stays free of
+# host-specific paths.
+{
+	admin off
+	auto_https off
+}
+
+{$SITE_ADDRESS::443} {
+	tls {$TLS_CERT} {$TLS_KEY}
+
+	reverse_proxy {$UPSTREAM:web:8080} {
+		# Server-sent events: pass each event straight through. Caddy buffers by
+		# default, which would hold the live feed until the buffer fills.
+		flush_interval -1
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}
+
+http://:80 {
+	# Let's Encrypt HTTP-01 challenges are answered from a webroot, so renewals
+	# never need this container stopped — the old standalone authenticator would
+	# have collided with this listener on port 80.
+	#   certbot renew --webroot -w /var/www/certbot
+	@acme path /.well-known/acme-challenge/*
+	handle @acme {
+		root * /var/www/certbot
+		file_server
+	}
+
+	handle {
+		redir https://{host}{uri} permanent
+	}
+}

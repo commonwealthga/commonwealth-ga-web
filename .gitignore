@@ -1,0 +1,32 @@
+# Rust build output
+/target/
+
+# Frontend
+web/node_modules/
+web/build/
+web/.svelte-kit/
+
+# Deployment config that holds secrets / host paths — rendered at deploy time
+# from deploy/docker-compose.override.template.yml.
+docker-compose.override.yml
+.env
+deploy/certs/
+
+# Website-owned data (a bind mount in production, a scratch dir locally).
+site-data/
+
+# Download payloads served under /files/*. Mounted in production; the repository
+# only tracks the directory itself.
+files/*
+!files/.gitkeep
+
+# Screenshot output from scripts/shot.sh
+.shots/
+.shots*/
+
+# Databases are mounted, never committed.
+*.db
+*.db-shm
+*.db-wal
+
+.DS_Store

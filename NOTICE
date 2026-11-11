@@ -1,0 +1,32 @@
+The Commonwealth website
+Copyright (C) 2025-2026 The Commonwealth
+
+This software is licensed under the PolyForm Shield License 1.0.0. The full
+terms are in LICENSE. In short: read it, run it, change it, contribute to it —
+but do not use it to provide a product that competes with The Commonwealth.
+
+Two things the licence deliberately does not cover.
+
+## Names and marks
+
+The licence covers copyright in the code. It grants no rights to the names
+"The Commonwealth" and "Commonwealth", to the wordmark, logotype, favicon, or
+to the artwork, palette and copy of the live site at
+<https://commonwealth.ydns.eu>. Running a copy of this software as a website
+for another project means running it under your own name and design, not this
+one. Some of those names and marks are used in commerce and are asserted as
+trademarks.
+
+## Third-party components
+
+Redistributed here under their own terms, which this project cannot and does
+not sublicense:
+
+- Barlow and IBM Plex Mono, under the SIL Open Font License 1.1.
+  See web/static/fonts/OFL-barlow.txt and OFL-ibmplexmono.txt.
+- Rust and JavaScript dependencies, listed in Cargo.lock and
+  web/package-lock.json, each under its own licence, mostly MIT or Apache-2.0.
+
+The game server (<https://github.com/commonwealthga/commonwealth-ga-server>) is
+a separate work under the GNU AGPL-3.0. Nothing in this licence changes the
+terms of that project.

@@ -1,0 +1,126 @@
+# Public-safe base compose file: no secrets, no host-specific paths.
+#
+# Deployment specifics (real DB location, Let's Encrypt certificate paths, the
+# edge's site address) live in docker-compose.override.yml, which is gitignored
+# and rendered on the server from deploy/docker-compose.override.template.yml.
+#
+# Requires compose v2 (`docker compose`). The legacy v1 `docker-compose` binary
+# is end-of-life and is not supported.
+#
+#   web   the Rust app: JSON API, live SSE feed, the built SvelteKit app
+#   edge  Caddy: TLS termination (host certificates) and HTTP->HTTPS redirect
+
+name: commonwealth-ga-web
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${WEB_IMAGE:-ghcr.io/commonwealthga/commonwealth-ga-web}:${WEB_IMAGE_TAG:-local}
+    restart: unless-stopped
+    # Match the owner of the mounted game DB so the read-only mount is readable
+    # and `site.db` is writable. Overridable per deployment.
+    user: "${WEB_UID:-1000}:${WEB_GID:-1000}"
+    environment:
+      WEB_BIND: "0.0.0.0:8080"
+      WEB_STATIC_DIR: "/app/static"
+      WEB_DB_LIVE: "/data/server.db"
+      WEB_DB_SNAPSHOT: "/site-data/snapshot.db"
+      # Redacted-database download for third parties (the cards registry).
+      # Unset means the route 404s rather than publishing the archive.
+      WEB_DB_EXPORT_TOKEN: "${WEB_DB_EXPORT_TOKEN:-}"
+      WEB_DB_SITE: "/site-data/site.db"
+      WEB_FILES_DIR: "/srv/files"
+      # Player settings: empty by default, which leaves the settings page
+      # readable but not writable. Production fills this from the override.
+      WEB_CONTROL_API_URL: "${WEB_CONTROL_API_URL:-}"
+      WEB_CONTROL_API_TOKEN: "${WEB_CONTROL_API_TOKEN:-}"
+      WEB_STATUS_TTL_SECS: "60"
+      WEB_LIVE_TICK_SECS: "15"
+      RUST_LOG: ${RUST_LOG:-info,tower_http=warn}
+    ports:
+      # Loopback only: the edge is the only thing listening publicly. Handy for
+      # `curl 127.0.0.1:8080` debugging on the VPS.
+      - "127.0.0.1:8080:8080"
+    volumes:
+      # The game DB is read-only. Nothing on this side ever writes to it.
+      - ${WEB_DB_HOST_DIR:-.}:/data:ro
+      # Website-owned read-write data (snapshots, site.db, uploads).
+      - ${WEB_SITE_DATA_DIR:-./site-data}:/site-data
+      # Download directory for /files/*: restored-map archives the launcher
+      # fetches. Read-only, and read per request — drop a file in and it is
+      # served immediately, with no restart.
+      - ${WEB_FILES_HOST_DIR:-./files}:/srv/files:ro
+
+  # Periodic redacted snapshot of the game database. Every statistics query
+  # reads the published file instead of the database the game server writes to,
+  # and /db-export serves the same file. Opt-in, because it needs the live DB
+  # mounted and a writable site-data volume:
+  #   docker compose --profile snapshot up -d snapshotter
+  snapshotter:
+    profiles: ["snapshot"]
+    image: ${WEB_IMAGE:-ghcr.io/commonwealthga/commonwealth-ga-web}:${WEB_IMAGE_TAG:-local}
+    user: "${WEB_UID:-1000}:${WEB_GID:-1000}"
+    entrypoint: ["/usr/local/bin/snapshotter"]
+    restart: unless-stopped
+    environment:
+      WEB_DB_LIVE: "/data/server.db"
+      WEB_DB_SNAPSHOT: "/site-data/snapshot.db"
+      WEB_SNAPSHOT_INTERVAL_SECS: "${WEB_SNAPSHOT_INTERVAL_SECS:-300}"
+      RUST_LOG: ${RUST_LOG:-info}
+    volumes:
+      - ${WEB_DB_HOST_DIR:-.}:/data:ro
+      - ${WEB_SITE_DATA_DIR:-./site-data}:/site-data
+
+  # Dev-loop frontend with HMR. Node stays in the container, so the host needs
+  # no Node at all: `docker compose --profile dev up web-dev` (with the Rust API
+  # running on the host via `cargo run`, or in the `web` service below).
+  web-dev:
+    profiles: ["dev"]
+    image: node:22-alpine
+    working_dir: /app
+    command:
+      - sh
+      - -c
+      - |
+        [ -f node_modules/.package-lock.json ] || npm ci --no-audit --no-fund
+        exec npm run dev -- --host 0.0.0.0
+    environment:
+      # Reach a backend on the host (Linux needs host-gateway, added below) or
+      # the `web` service on the compose network.
+      VITE_API_TARGET: ${VITE_API_TARGET:-http://host.docker.internal:8080}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:5173:5173"
+    volumes:
+      - ./web:/app
+      # Keep the container's node_modules out of the host tree, so a host
+      # install and the container's install never fight over the same files.
+      - web-node-modules:/app/node_modules
+
+  edge:
+    profiles: ["edge"]
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      web:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:443}
+      TLS_CERT: ${TLS_CERT:-/certs/public.crt}
+      TLS_KEY: ${TLS_KEY:-/certs/public.key}
+      UPSTREAM: web:8080
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${CERT_DIR:-./deploy/certs}:/certs:ro
+      # Webroot for Let's Encrypt HTTP-01 renewals (see deploy/Caddyfile).
+      - ${ACME_WEBROOT:-./deploy/acme}:/var/www/certbot:ro
+
+volumes:
+  web-node-modules:

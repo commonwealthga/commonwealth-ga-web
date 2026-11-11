@@ -1,0 +1,46 @@
+# Template for the production docker-compose.override.yml.
+#
+# The deploy workflow renders this with envsubst and places the result next to
+# docker-compose.yml on the server. The rendered file is gitignored: it holds
+# host paths that must not be committed (and, later, secrets).
+#
+# Only structural deployment detail belongs here — nothing that would need to
+# be secret to keep the site safe. Discord OAuth credentials and similar join
+# this file (as ${VARS} rendered from GitHub secrets) when accounts land.
+services:
+  web:
+    # The game server shares this machine; keep the website off its cores.
+    cpuset: "0"
+    # Player settings: the control server listens on the host's loopback, so the
+    # container reaches it through the docker bridge gateway. The token is the
+    # control server's admin_token (same value in its control-server.json) and
+    # arrives from a GitHub secret, like every other credential here.
+    extra_hosts:
+      - "control.internal:host-gateway"
+    environment:
+      WEB_CONTROL_API_URL: "${WEB_CONTROL_API_URL}"
+      # Same value as admin_token in the control server's control-server.json.
+      # Empty means the settings page renders read-only instead of failing.
+      WEB_CONTROL_API_TOKEN: "${WEB_CONTROL_API_TOKEN}"
+      # Token in the path of /db-export/<token>. Empty disables the route.
+      WEB_DB_EXPORT_TOKEN: "${WEB_DB_EXPORT_TOKEN}"
+    # uid/gid of the account that owns ${WEB_HOST_HOME}/games on the VPS.
+    user: "${WEB_UID}:${WEB_GID}"
+    volumes:
+      - ${WEB_HOST_HOME}/games:/data:ro
+      - ${WEB_HOST_HOME}/website/site-data:/site-data
+      # /files/* downloads: the previous site's directory, unchanged, so the
+      # launcher's existing URLs keep working. Edit the contents in place --
+      # the server reads them per request, so there is nothing to restart.
+      - ${WEB_HOST_HOME}/public/files:/srv/files:ro
+
+  edge:
+    cpuset: "0"
+    environment:
+      SITE_ADDRESS: ":443"
+      TLS_CERT: /etc/letsencrypt/live/commonwealth.ydns.eu/fullchain.pem
+      TLS_KEY: /etc/letsencrypt/live/commonwealth.ydns.eu/privkey.pem
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      # certbot's webroot; must match the -w argument in the renew command.
+      - /var/www/certbot:/var/www/certbot:ro

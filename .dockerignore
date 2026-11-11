@@ -1,0 +1,12 @@
+target/
+**/node_modules/
+web/.svelte-kit/
+web/build/
+.git/
+.github/
+site-data/
+*.db
+*.db-shm
+*.db-wal
+docker-compose.override.yml
+.env

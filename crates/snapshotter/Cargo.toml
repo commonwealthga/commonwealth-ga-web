@@ -1,0 +1,21 @@
+[package]
+name = "snapshotter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Periodic redacted copy of the game database, for the public archive and DB export"
+
+[dependencies]
+anyhow.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[[bin]]
+name = "snapshotter"
+path = "src/main.rs"

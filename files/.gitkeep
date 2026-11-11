@@ -1,0 +1,5 @@
+# Download payloads served under /files/*.
+#
+# Anything dropped here is served at /files/<name> immediately, no restart and no
+# rebuild — this directory is a bind mount in production. The launcher depends
+# on these exact URLs, so file names are effectively a public API.

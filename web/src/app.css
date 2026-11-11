@@ -1,0 +1,243 @@
+@import 'tailwindcss';
+
+/* ---------------------------------------------------------------------------
+   Type: self-hosted (latin subsets, OFL — see /fonts/OFL-*.txt).
+   --------------------------------------------------------------------------- */
+
+@font-face {
+	font-family: 'Barlow Condensed';
+	src: url('/fonts/barlow-condensed-600.woff2') format('woff2');
+	font-weight: 600;
+	font-style: normal;
+	font-display: swap;
+}
+@font-face {
+	font-family: 'Barlow Condensed';
+	src: url('/fonts/barlow-condensed-700.woff2') format('woff2');
+	font-weight: 700;
+	font-style: normal;
+	font-display: swap;
+}
+@font-face {
+	font-family: 'Barlow';
+	src: url('/fonts/barlow-400.woff2') format('woff2');
+	font-weight: 400;
+	font-style: normal;
+	font-display: swap;
+}
+@font-face {
+	font-family: 'Barlow';
+	src: url('/fonts/barlow-500.woff2') format('woff2');
+	font-weight: 500;
+	font-style: normal;
+	font-display: swap;
+}
+@font-face {
+	font-family: 'IBM Plex Mono';
+	src: url('/fonts/plex-mono-400.woff2') format('woff2');
+	font-weight: 400;
+	font-style: normal;
+	font-display: swap;
+}
+@font-face {
+	font-family: 'IBM Plex Mono';
+	src: url('/fonts/plex-mono-500.woff2') format('woff2');
+	font-weight: 500;
+	font-style: normal;
+	font-display: swap;
+}
+
+/* ---------------------------------------------------------------------------
+   Tokens
+   --------------------------------------------------------------------------- */
+
+@theme {
+	--color-void: #070506;
+	--color-carbon: #0b0909;
+	--color-panel: #120e0d;
+	--color-panel-hi: #1a1413;
+	--color-line: #2b2220;
+	--color-line-hi: #423330;
+	--color-ink: #f4ece3;
+	--color-dim: #ad9e94;
+	--color-faint: #7d6e66;
+
+	/* Commonwealth livery */
+	--color-red: #e0391c;
+	--color-red-deep: #8d1f0f;
+	--color-ember: #ff7a18;
+	--color-amber: #ffb552;
+
+	/* Cold counterweight for data */
+	--color-steel: #86b6c2;
+
+	--font-display: 'Barlow Condensed', ui-sans-serif, system-ui, sans-serif;
+	--font-sans: 'Barlow', ui-sans-serif, system-ui, sans-serif;
+	--font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+	--animate-hex-pulse: hex-pulse 6s ease-in-out infinite;
+	--animate-ping-slow: ping-slow 2.6s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+/* ---------------------------------------------------------------------------
+   Keyframes
+   --------------------------------------------------------------------------- */
+
+@keyframes hex-pulse {
+	0%,
+	100% {
+		opacity: 0.07;
+	}
+	50% {
+		opacity: 0.45;
+	}
+}
+
+@keyframes ping-slow {
+	0% {
+		transform: scale(1);
+		opacity: 0.7;
+	}
+	80%,
+	100% {
+		transform: scale(2.4);
+		opacity: 0;
+	}
+}
+
+/* Reveal-on-scroll, applied by the `reveal` action. */
+@keyframes rise {
+	from {
+		opacity: 0;
+		transform: translateY(12px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+/* ---------------------------------------------------------------------------
+   Base
+   --------------------------------------------------------------------------- */
+
+html {
+	color-scheme: dark;
+	scrollbar-color: var(--color-line-hi) var(--color-void);
+}
+
+body {
+	background-color: var(--color-void);
+	color: var(--color-ink);
+	font-family: var(--font-sans);
+	-webkit-font-smoothing: antialiased;
+	overflow-x: hidden;
+}
+
+::selection {
+	background: var(--color-red);
+	color: #fff;
+}
+
+/* Two ember ticks — top-left and bottom-right — on any framed surface.
+   The house mark: enough to read as "instrument panel" without boxing
+   everything four times over. Pseudo-elements so it costs no extra markup. */
+.panel-ticks {
+	position: relative;
+}
+.panel-ticks::before,
+.panel-ticks::after {
+	content: '';
+	position: absolute;
+	width: 0.5rem;
+	height: 0.5rem;
+	pointer-events: none;
+	border-color: color-mix(in srgb, var(--color-ember) 60%, transparent);
+}
+.panel-ticks::before {
+	top: -1px;
+	left: -1px;
+	border-top-width: 1px;
+	border-left-width: 1px;
+	border-style: solid;
+}
+.panel-ticks::after {
+	right: -1px;
+	bottom: -1px;
+	border-right-width: 1px;
+	border-bottom-width: 1px;
+	border-style: solid;
+}
+
+/* Tailwind's preflight leaves buttons with the default arrow cursor, which made
+   every control on the site read as a label rather than something pressable.
+   One rule here beats repeating `cursor-pointer` on each button. */
+button:not(:disabled),
+[role='button']:not(:disabled),
+summary:not([aria-disabled='true']) {
+	cursor: pointer;
+}
+
+button:disabled {
+	cursor: not-allowed;
+}
+
+:focus-visible {
+	outline: 2px solid var(--color-ember);
+	outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------------------
+   Utilities
+   --------------------------------------------------------------------------- */
+
+/* The hex field: the AvA conquest map, reduced to a quiet texture. */
+@utility hexes {
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='49' viewBox='0 0 28 49'%3E%3Cg fill='none' stroke='%23e0391c' stroke-width='1'%3E%3Cpath d='M13.99 9.25l13 7.5v15l-13 7.5L1 31.75v-15l12.99-7.5zM3 17.9v12.7l10.99 6.34 11-6.35V17.9l-11-6.34L3 17.9zM0 15l12.98-7.5V0h-2v6.35L0 12.69v2.3zm0 3.51v15l12.98 7.5V34.7L2 27.68v-8.86L0 18.5zm28-3.5v2.3l-11 6.35v-2.32L28 15zm0 8.51v-8.5l-2-1.15v8.86l-11 7.01v2.32L28 27.51z'/%3E%3C/g%3E%3C/svg%3E");
+	background-size: 56px 98px;
+}
+
+/* Clipped corner. Borders cannot follow a clip path, so outlined surfaces draw
+   their rim with a second clipped layer instead (see Button.svelte). */
+@utility clip-corner {
+	clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+}
+
+@utility clip-corner-sm {
+	clip-path: polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 0 100%);
+}
+
+/* Mono micro-label: the voice of an official form. Use sparingly. */
+@utility label {
+	font-family: var(--font-mono);
+	font-size: 0.6875rem;
+	line-height: 1.2;
+	letter-spacing: 0.16em;
+	text-transform: uppercase;
+}
+
+@utility heading {
+	font-family: var(--font-display);
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.015em;
+	line-height: 0.94;
+}
+
+@utility ember-text {
+	background-image: linear-gradient(100deg, var(--color-amber), var(--color-ember) 45%, var(--color-red));
+	-webkit-background-clip: text;
+	background-clip: text;
+	color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+		scroll-behavior: auto !important;
+	}
+}

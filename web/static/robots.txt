@@ -1,0 +1,11 @@
+# The Commonwealth — a Global Agenda community server
+User-agent: *
+Allow: /
+# The API answers JSON to the site and the Discord bot; there is nothing here
+# for a crawler, and the export endpoint is token-gated.
+Disallow: /api/
+Disallow: /db-export/
+# Downloads are large binaries, not pages.
+Disallow: /files/
+
+Sitemap: https://commonwealth.ydns.eu/sitemap.xml
