@@ -64,6 +64,11 @@ services:
     user: "${WEB_UID:-1000}:${WEB_GID:-1000}"
     entrypoint: ["/usr/local/bin/snapshotter"]
     restart: unless-stopped
+    # The image's healthcheck probes the web API's /api/health, which this
+    # entrypoint does not serve — left on, the container reports unhealthy for
+    # its whole life and the column stops meaning anything.
+    healthcheck:
+      disable: true
     environment:
       WEB_DB_LIVE: "/data/server.db"
       WEB_DB_SNAPSHOT: "/site-data/snapshot.db"
