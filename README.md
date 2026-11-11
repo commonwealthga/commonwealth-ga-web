@@ -163,6 +163,24 @@ Player settings (`/settings`) need the control server's endpoint: set
 without them the page renders read-only rather than failing. In production they
 come from the `WEB_CONTROL_API_URL` repository variable and the
 `WEB_CONTROL_API_TOKEN` secret, rendered into the override at deploy time.
+
+### Repository secrets
+
+Set with `gh secret set <name>`; the deploy job reads them and renders the
+override. Everything else the deployment needs is a repository *variable*.
+
+| Secret | Meaning |
+|---|---|
+| `DEPLOY_HOST` | VPS hostname or IP |
+| `DEPLOY_PORT` | SSH port of the deploy account |
+| `DEPLOY_USER` | Deploy account |
+| `DEPLOY_SSH_KEY` | Private key for that account |
+| `DEPLOY_KNOWN_HOSTS` | Pinned host key, from `ssh-keyscan -p <port> <host>` |
+| `WEB_CONTROL_API_TOKEN` | `admin_token` from the game server's `control-server.json`; unset makes the settings page read-only |
+| `WEB_DB_EXPORT_TOKEN` | Path token for `/db-export/<token>`; unset makes the route 404, which breaks the cards registry |
+
+The last two are optional in the sense that the site still starts without them —
+it just quietly loses a feature, so the deploy warns when either is empty.
 | `/api/matches/{instance_id}` | One match in full: `kind` is `pve` or `pvp`, plus participants, team totals and — for PvP — pre-match MMR and team balance |
 | `/api/online-history?days=N` | Hourly peak concurrent players, two parallel arrays |
 | `/api/auth/login` · `/api/auth/logout` · `/api/auth/me` | Sign-in with in-game credentials (see below) |

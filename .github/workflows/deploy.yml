@@ -193,6 +193,13 @@ jobs:
             echo "::error::Set the repository variable WEB_DATA_HOME (e.g. /home/<data owner>)."
             exit 1
           }
+          # Features that switch themselves off when their token is missing.
+          # Say so in the run, because the site just 404s otherwise and nothing
+          # in the deploy output explains why.
+          test -n "${WEB_CONTROL_API_TOKEN}" || \
+            echo "::warning::WEB_CONTROL_API_TOKEN is empty — the player-settings page will be read-only."
+          test -n "${WEB_DB_EXPORT_TOKEN}" || \
+            echo "::warning::WEB_DB_EXPORT_TOKEN is empty — /db-export/<token> will 404." 
           envsubst '${WEB_UID} ${WEB_GID} ${WEB_DATA_HOME} ${WEB_CONTROL_API_URL} ${WEB_CONTROL_API_TOKEN} ${WEB_DB_EXPORT_TOKEN}' \
             < deploy/docker-compose.override.template.yml \
             > /tmp/docker-compose.override.yml
