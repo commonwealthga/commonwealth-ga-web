@@ -163,9 +163,12 @@ jobs:
             # no long-lived registry secret to store or rotate.
             DOCKERCFG=$(mktemp -d)
             trap 'rm -rf "$DOCKERCFG"' EXIT
-            printf '%s' '${{ secrets.GITHUB_TOKEN }}' \
-              | docker login ghcr.io -u '${{ github.actor }}' --password-stdin --config "$DOCKERCFG" >/dev/null
+            # DOCKER_CONFIG, not `--config`: that is a global docker flag, not a
+            # `login` one, and the CLI points at this directory for the rest of
+            # the script — including `docker compose pull`.
             export DOCKER_CONFIG="$DOCKERCFG"
+            printf '%s' '${{ secrets.GITHUB_TOKEN }}' \
+              | docker login ghcr.io -u '${{ github.actor }}' --password-stdin >/dev/null
 
             ln -sfn "$BASE/releases/$TARGET" "$BASE/current"
             cd "$BASE/current"
@@ -234,9 +237,12 @@ jobs:
             # no long-lived registry secret to store or rotate.
             DOCKERCFG=$(mktemp -d)
             trap 'rm -rf "$DOCKERCFG"' EXIT
-            printf '%s' '${{ secrets.GITHUB_TOKEN }}' \
-              | docker login ghcr.io -u '${{ github.actor }}' --password-stdin --config "$DOCKERCFG" >/dev/null
+            # DOCKER_CONFIG, not `--config`: that is a global docker flag, not a
+            # `login` one, and the CLI points at this directory for the rest of
+            # the script — including `docker compose pull`.
             export DOCKER_CONFIG="$DOCKERCFG"
+            printf '%s' '${{ secrets.GITHUB_TOKEN }}' \
+              | docker login ghcr.io -u '${{ github.actor }}' --password-stdin >/dev/null
 
             if [ "${START:-true}" != "true" ]; then
               # Pull the images even though nothing starts: ports stay with
