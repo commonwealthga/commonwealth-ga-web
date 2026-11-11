@@ -126,8 +126,11 @@ jobs:
             echo "Rolling back: $CUR -> $TARGET"
             ln -sfn "$BASE/releases/$TARGET" "$BASE/current"
             cd "$BASE/current"
-            docker compose -p commonwealth-ga-web --profile edge pull
-            docker compose -p commonwealth-ga-web --profile edge up -d
+            # Both profiles: `edge` for Caddy, `snapshot` for the snapshotter.
+            # Without the latter nothing refreshes snapshot.db, and every
+            # statistics query and /db-export reads that file.
+            docker compose -p commonwealth-ga-web --profile edge --profile snapshot pull
+            docker compose -p commonwealth-ga-web --profile edge --profile snapshot up -d
           REMOTE_SCRIPT
 
       - name: Prepare release
@@ -178,8 +181,11 @@ jobs:
 
             ln -sfn "$REL" "$BASE/current"
             cd "$BASE/current"
-            docker compose -p commonwealth-ga-web --profile edge pull
-            docker compose -p commonwealth-ga-web --profile edge up -d
+            # Both profiles: `edge` for Caddy, `snapshot` for the snapshotter.
+            # Without the latter nothing refreshes snapshot.db, and every
+            # statistics query and /db-export reads that file.
+            docker compose -p commonwealth-ga-web --profile edge --profile snapshot pull
+            docker compose -p commonwealth-ga-web --profile edge --profile snapshot up -d
 
             # Keep the 8 newest releases plus whatever current points to.
             CUR=$(basename "$(readlink "$BASE/current")")
