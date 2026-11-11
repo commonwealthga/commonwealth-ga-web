@@ -34,6 +34,18 @@ services:
       # the server reads them per request, so there is nothing to restart.
       - ${WEB_DATA_HOME}/public/files:/srv/files:ro
 
+  # Without this section the service falls back to the base file's defaults —
+  # `${WEB_DB_HOST_DIR:-.}` and `${WEB_SITE_DATA_DIR:-./site-data}` — which
+  # resolve against the release directory, so the snapshotter tries to open
+  # `<release>/server.db`, fails, and publishes nothing. Every statistics query
+  # and /db-export then reads a file that does not exist.
+  snapshotter:
+    cpuset: "0"
+    user: "${WEB_UID}:${WEB_GID}"
+    volumes:
+      - ${WEB_DATA_HOME}/games:/data:ro
+      - ${WEB_DATA_HOME}/website/site-data:/site-data
+
   edge:
     cpuset: "0"
     environment:

@@ -15,6 +15,13 @@ deploy over SSH as `zax` on port 554 with the key stored as `DEPLOY_SSH_KEY`.
 | `/home/zax/games/` | the game server and its database, mounted read-only at `/data` |
 | `/home/zax/website-old-aug/` | the retired August layout, kept only as an archive; safe to delete |
 
+Every service that mounts host data needs a section in
+`deploy/docker-compose.override.template.yml`. The base file's defaults
+(`${WEB_DB_HOST_DIR:-.}`, `${WEB_SITE_DATA_DIR:-./site-data}`) resolve against
+the release directory, so a service without an override quietly mounts the
+release itself — that is how the snapshotter came up with `<release>/server.db`
+as its "live" database and published nothing.
+
 The pre-Rust site still runs as compose project `public` (container
 `ga-public`) from `/home/zax/public`, and owns port 443 until the cutover.
 

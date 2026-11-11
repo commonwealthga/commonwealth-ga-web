@@ -254,12 +254,16 @@ jobs:
               exit 0
             fi
 
-            ln -sfn "$REL" "$BASE/current"
-            cd "$BASE/current"
+            # Pull before flipping `current`: a failed pull should leave the
+            # live release live, not leave the symlink pointing at a release
+            # that cannot start.
+            cd "$REL"
             # Both profiles: `edge` for Caddy, `snapshot` for the snapshotter.
             # Without the latter nothing refreshes snapshot.db, and every
             # statistics query and /db-export reads that file.
             docker compose -p commonwealth-ga-web --profile edge --profile snapshot pull
+            ln -sfn "$REL" "$BASE/current"
+            cd "$BASE/current"
             docker compose -p commonwealth-ga-web --profile edge --profile snapshot up -d
 
             # Keep the 8 newest releases plus whatever current points to.
