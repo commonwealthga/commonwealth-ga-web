@@ -131,21 +131,37 @@ sudo sed -i 's|^authenticator = standalone$|authenticator = webroot\nwebroot_pat
   /etc/letsencrypt/renewal/commonwealth.ydns.eu.conf
 sudo grep -nE 'authenticator|webroot_path' /etc/letsencrypt/renewal/commonwealth.ydns.eu.conf
 
-# Restart the edge after a renewal, since Caddy reads the files once.
-sudo tee /usr/local/bin/reload-edge >/dev/null <<'SH'
+# Restart whatever reads the certificates after a renewal. Both the Caddy edge
+# and the dashboard load them at startup and never re-read the files.
+sudo tee /usr/local/bin/reload-certs >/dev/null <<'SH'
 #!/bin/sh
-id=$(docker ps -q \
+edge=$(docker ps -q \
   --filter label=com.docker.compose.project=commonwealth-ga-web \
   --filter label=com.docker.compose.service=edge | head -1)
-[ -n "$id" ] && docker restart "$id"
+[ -n "$edge" ] && docker restart "$edge"
+docker restart ga-dashboard >/dev/null 2>&1 || true
 SH
-sudo chmod 755 /usr/local/bin/reload-edge
-sudo sed -i '/^\[renewalparams\]/a renew_hook = /usr/local/bin/reload-edge' \
+sudo chmod 755 /usr/local/bin/reload-certs
+sudo sed -i '/^\[renewalparams\]/a renew_hook = /usr/local/bin/reload-certs' \
   /etc/letsencrypt/renewal/commonwealth.ydns.eu.conf
 
 # Prove it without touching the live certificate.
 sudo certbot renew --dry-run
 ```
+
+### Every HTTPS service on this host needs a real certificate
+
+The site sends `Strict-Transport-Security: max-age=31536000; includeSubDomains`.
+HSTS is per **host**, not per port, so it covers every service on
+`commonwealth.ydns.eu` — including ones on other ports. A self-signed
+certificate on any of them becomes a hard browser error with **no** "accept the
+risk" option, which is what the dashboard on `:8443` ran into: its entrypoint
+generated one when no certificate was configured.
+
+So the dashboard mounts `/etc/letsencrypt` read-only and takes
+`DASHBOARD_TLS_CERT` / `DASHBOARD_TLS_KEY` from the deployment's own lineage,
+and `reload-certs` restarts it after a renewal along with the edge. Anything else
+added here must do the same, or be behind Caddy.
 
 `--dry-run` exercises the webroot path through Caddy. It fails if the edge is
 down or its `http://:80` block is missing, which is the point.
