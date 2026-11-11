@@ -81,6 +81,15 @@ jobs:
       # The release tarball and the compose template both come from the repo,
       # and this job does not inherit the build job's workspace. A rollback
       # needs neither, so only check out when there is something to upload.
+      # The release tarball and the compose template both come from the repo,
+      # and this job does not inherit the build job's workspace. A rollback
+      # needs neither, so only check out when there is something to upload.
+      - name: Checkout
+        if: ${{ !startsWith(inputs.deploy, 'previous') }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.deploy }}
+
       - name: Check the image pulls with CI's token
         if: ${{ !startsWith(inputs.deploy, 'previous') }}
         # The package is private, so the pull happens with the job's own
