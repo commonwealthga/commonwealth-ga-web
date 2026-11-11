@@ -63,7 +63,7 @@ pub async fn health(State(state): State<Arc<AppState>>) -> Response {
         Json(json!({
             "ok": live_db_ok,
             "live_db": live_db_ok,
-            "snapshot_db": state.snapshot_pool.is_some(),
+            "snapshot_db": state.snapshot_available().await,
             "site_db": state.site_pool.is_some(),
         })),
     )

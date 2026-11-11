@@ -11,6 +11,8 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use tokio::sync::Mutex;
 
+use crate::snapshot::StatsSource;
+
 pub const LIMIT_DEFAULT: u32 = 8;
 pub const LIMIT_MAX: u32 = 50;
 
@@ -284,7 +286,7 @@ pub enum MatchError {
 const CACHE_WINDOW: u32 = 200;
 
 pub struct MatchService {
-    pool: Option<SqlitePool>,
+    stats: StatsSource,
     ttl: Duration,
     /// Window cached once per filter and sliced per request, so the number of
     /// distinct `limit`/`page` combinations a client asks for cannot multiply
@@ -293,9 +295,9 @@ pub struct MatchService {
 }
 
 impl MatchService {
-    pub fn new(pool: Option<SqlitePool>, ttl: Duration) -> Self {
+    pub fn new(stats: impl Into<StatsSource>, ttl: Duration) -> Self {
         Self {
-            pool,
+            stats: stats.into(),
             ttl,
             cache: Mutex::new(Vec::new()),
         }
@@ -309,7 +311,8 @@ impl MatchService {
         offset: u32,
     ) -> Result<(i64, Vec<MatchSummary>), MatchError> {
         let limit = limit.clamp(1, PAGE_LIMIT_MAX);
-        let pool = self.pool.as_ref().ok_or(MatchError::NotConfigured)?;
+        let pool = self.stats.pool().await.ok_or(MatchError::NotConfigured)?;
+        let pool = &pool;
 
         if offset + limit <= CACHE_WINDOW
             && let Some(rows) = self.cached_window(kind).await
@@ -347,7 +350,8 @@ impl MatchService {
             }
         }
 
-        let pool = self.pool.as_ref()?;
+        let pool = self.stats.pool().await?;
+        let pool = &pool;
         let rows: Vec<MatchSummary> = sqlx::query_as(&with_filter(RECENT_MATCHES_SQL, kind))
             .bind(CACHE_WINDOW as i64)
             .bind(0_i64)

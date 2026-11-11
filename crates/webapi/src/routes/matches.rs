@@ -107,10 +107,10 @@ pub struct ViewerOutcome {
 /// One indexed lookup by `user_id` rather than one query per match; a match the
 /// player did not take part in is simply absent from the map.
 async fn viewer_sides(state: &AppState, user_id: i64) -> Result<HashMap<i64, i64>, AppError> {
-    let Some(pool) = state.stats_pool() else {
+    let Some(pool) = state.stats_pool().await else {
         return Ok(HashMap::new());
     };
-    sides_for(pool, user_id)
+    sides_for(&pool, user_id)
         .await
         .map_err(|e| AppError::Internal(anyhow::Error::new(e)))
 }
@@ -148,9 +148,10 @@ pub async fn detail(
     Path(raw_id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let Some(live) = state.stats_pool() else {
+    let Some(live) = state.stats_pool().await else {
         return Err(AppError::Unavailable("match archive".to_string()));
     };
+    let live = &live;
 
     // Parsed here rather than by the extractor so a junk id is the same 404 as
     // an id that simply is not in the archive.

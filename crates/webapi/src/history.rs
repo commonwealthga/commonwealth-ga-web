@@ -19,6 +19,8 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use tokio::sync::Mutex;
 
+use crate::snapshot::StatsSource;
+
 /// How long an unclosed session is assumed to last on its own.
 pub const UNKNOWN_LOGOUT_SECS: i64 = 30 * 60;
 pub const HOUR_SECS: i64 = 3600;
@@ -43,15 +45,15 @@ pub enum HistoryError {
 }
 
 pub struct HistoryService {
-    pool: Option<SqlitePool>,
+    stats: StatsSource,
     ttl: Duration,
     cache: Mutex<Option<(Instant, Arc<OnlineHistory>)>>,
 }
 
 impl HistoryService {
-    pub fn new(pool: Option<SqlitePool>, ttl: Duration) -> Self {
+    pub fn new(stats: impl Into<StatsSource>, ttl: Duration) -> Self {
         Self {
-            pool,
+            stats: stats.into(),
             ttl,
             cache: Mutex::new(None),
         }
@@ -82,8 +84,8 @@ impl HistoryService {
             return Ok(Arc::clone(series));
         }
 
-        let pool = self.pool.as_ref().ok_or(HistoryError::NotConfigured)?;
-        let series = Arc::new(self.compute_from_db(pool).await?);
+        let pool = self.stats.pool().await.ok_or(HistoryError::NotConfigured)?;
+        let series = Arc::new(self.compute_from_db(&pool).await?);
         *self.cache.lock().await = Some((Instant::now(), Arc::clone(&series)));
         Ok(series)
     }

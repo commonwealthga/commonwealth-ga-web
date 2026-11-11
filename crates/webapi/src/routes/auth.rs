@@ -157,7 +157,9 @@ pub async fn matches(
 
     let live = state
         .stats_pool()
+        .await
         .ok_or_else(|| AppError::Unavailable("live game database".to_string()))?;
+    let live = &live;
 
     let limit = query
         .limit
@@ -202,7 +204,9 @@ pub async fn summary(
     let session = require_session(&state, &headers).await?;
     let live = state
         .stats_pool()
+        .await
         .ok_or_else(|| AppError::Unavailable("live game database".to_string()))?;
+    let live = &live;
 
     let totals: CareerTotals = sqlx::query_as(
         "SELECT COUNT(*) AS matches,

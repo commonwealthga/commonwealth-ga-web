@@ -17,6 +17,7 @@ pub mod matches;
 pub mod mmr;
 pub mod routes;
 pub mod settings;
+pub mod snapshot;
 pub mod status;
 
 use std::path::Path;
@@ -40,6 +41,7 @@ use crate::auth::AttemptLimiter;
 use crate::config::Config;
 use crate::history::HistoryService;
 use crate::matches::MatchService;
+use crate::snapshot::StatsSource;
 use crate::status::StatusService;
 
 /// Number of buffered live events a slow SSE client may fall behind before it
@@ -60,8 +62,12 @@ pub struct AppState {
     pub limiter: AttemptLimiter,
     /// Live game DB — read-only, and only for the player count.
     pub live_pool: Option<SqlitePool>,
-    /// Redacted snapshot — the home of every heavy stats query.
-    pub snapshot_pool: Option<SqlitePool>,
+    /// Where statistics queries read from: the published snapshot, re-opened
+    /// as the snapshotter replaces it, falling back to the live database when
+    /// there is none.
+    pub stats: StatsSource,
+    /// The snapshot itself, for the health endpoint's availability report.
+    pub snapshot: Option<Arc<crate::snapshot::Snapshot>>,
     /// Website-owned read-write DB.
     pub site_pool: Option<SqlitePool>,
     /// Fan-out for `/api/live`.
@@ -76,14 +82,51 @@ impl AppState {
     /// rating series, leaderboards) must not run against the file the game
     /// server is writing. Callers that need *current* state — the player count,
     /// a player's own settings — keep using the live pool directly.
-    pub fn stats_pool(&self) -> Option<&SqlitePool> {
-        self.snapshot_pool.as_ref().or(self.live_pool.as_ref())
+    pub async fn stats_pool(&self) -> Option<SqlitePool> {
+        self.stats.pool().await
     }
 
+    /// Whether the snapshot is published right now. Asked of the filesystem
+    /// rather than remembered from startup, because the snapshotter publishes
+    /// after this process is already serving.
+    pub async fn snapshot_available(&self) -> bool {
+        match &self.snapshot {
+            Some(snapshot) => snapshot.available().await,
+            None => false,
+        }
+    }
+
+    /// A state whose statistics read one fixed pool — what tests want, and what
+    /// a deployment with no snapshot path gets.
     pub fn new(
         cfg: Config,
         live_pool: Option<SqlitePool>,
         snapshot_pool: Option<SqlitePool>,
+        site_pool: Option<SqlitePool>,
+    ) -> Arc<Self> {
+        let stats = StatsSource::from(snapshot_pool.clone().or_else(|| live_pool.clone()));
+        Self::build(cfg, live_pool, stats, None, site_pool)
+    }
+
+    /// Production: statistics follow the published snapshot file.
+    pub fn with_snapshot(
+        cfg: Config,
+        live_pool: Option<SqlitePool>,
+        snapshot: Option<Arc<crate::snapshot::Snapshot>>,
+        site_pool: Option<SqlitePool>,
+    ) -> Arc<Self> {
+        let stats = match &snapshot {
+            Some(handle) => StatsSource::snapshot(Arc::clone(handle), live_pool.clone()),
+            None => StatsSource::from(live_pool.clone()),
+        };
+        Self::build(cfg, live_pool, stats, snapshot, site_pool)
+    }
+
+    fn build(
+        cfg: Config,
+        live_pool: Option<SqlitePool>,
+        stats: StatsSource,
+        snapshot: Option<Arc<crate::snapshot::Snapshot>>,
         site_pool: Option<SqlitePool>,
     ) -> Arc<Self> {
         let (events, _) = broadcast::channel(EVENT_BUFFER);
@@ -94,12 +137,11 @@ impl AppState {
             cfg.status_override.clone(),
             control_addr,
         );
-        let stats_pool = snapshot_pool.clone().or_else(|| live_pool.clone());
         // Changes no faster than the snapshot itself, so a minute of caching is
         // invisible to a reader and keeps the hero cheap under load.
-        let activity = ActivityService::new(stats_pool.clone(), Duration::from_secs(60));
-        let matches = MatchService::new(stats_pool.clone(), cfg.match_ttl);
-        let history = HistoryService::new(stats_pool, cfg.history_ttl);
+        let activity = ActivityService::new(stats.clone(), Duration::from_secs(60));
+        let matches = MatchService::new(stats.clone(), cfg.match_ttl);
+        let history = HistoryService::new(stats.clone(), cfg.history_ttl);
         Arc::new(Self {
             cfg,
             status,
@@ -108,7 +150,8 @@ impl AppState {
             history,
             limiter: AttemptLimiter::default(),
             live_pool,
-            snapshot_pool,
+            stats,
+            snapshot,
             site_pool,
             events,
         })

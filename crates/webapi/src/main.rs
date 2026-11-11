@@ -5,6 +5,7 @@ use anyhow::Context;
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
 use webapi::config::Config;
+use webapi::snapshot::Snapshot;
 use webapi::status::StatusPayload;
 use webapi::{AppState, DEFAULT_ACTIVITY_DAYS, app, auth, db};
 
@@ -30,14 +31,20 @@ async fn main() -> anyhow::Result<()> {
         ),
         None => None,
     };
-    let snapshot_pool = match cfg.snapshot_db.as_deref() {
-        Some(path) => report(
+    // Not opened here: the snapshotter publishes after this process starts, and
+    // a pool opened at startup pins whichever file existed then (or none). The
+    // handle re-opens as the file is replaced — see snapshot.rs.
+    let snapshot = cfg.snapshot_db.as_deref().map(Snapshot::new);
+    if let Some(handle) = &snapshot {
+        // Opened once here, before any stats query runs, so a deployment with a
+        // missing or unreadable snapshot says so at boot rather than on the
+        // first page view.
+        report(
             "snapshot",
-            path,
-            db::open_read_only(path, POOL_CONNECTIONS).await,
-        ),
-        None => None,
-    };
+            handle.path(),
+            db::open_read_only(handle.path(), POOL_CONNECTIONS).await,
+        );
+    }
     let site_pool = match cfg.site_db.as_deref() {
         Some(path) => report(
             "site",
@@ -63,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!(file = %path.display(), "status override file (absent until created)");
     }
 
-    let state = AppState::new(cfg.clone(), live_pool, snapshot_pool, site_pool);
+    let state = AppState::with_snapshot(cfg.clone(), live_pool, snapshot, site_pool);
     spawn_status_ticker(Arc::clone(&state));
     warm_caches(Arc::clone(&state));
 

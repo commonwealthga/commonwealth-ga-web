@@ -16,6 +16,8 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use tokio::sync::Mutex;
 
+use crate::snapshot::StatsSource;
+
 /// Widest first? No — narrowest first, and the first window with any activity
 /// wins. `0` means "all time" and is the last resort.
 pub const WINDOWS_HOURS: [u32; 6] = [24, 48, 72, 168, 720, 0];
@@ -90,15 +92,15 @@ pub async fn summary(pool: &SqlitePool, now: i64) -> Result<Activity, sqlx::Erro
 
 /// A cached view of [`summary`], for a hero block every visitor loads.
 pub struct ActivityService {
-    pool: Option<SqlitePool>,
+    stats: StatsSource,
     ttl: Duration,
     cache: Mutex<Option<(Instant, Activity)>>,
 }
 
 impl ActivityService {
-    pub fn new(pool: Option<SqlitePool>, ttl: Duration) -> Self {
+    pub fn new(stats: impl Into<StatsSource>, ttl: Duration) -> Self {
         Self {
-            pool,
+            stats: stats.into(),
             ttl,
             cache: Mutex::new(None),
         }
@@ -114,8 +116,9 @@ impl ActivityService {
             }
         }
 
-        let pool = self.pool.as_ref()?;
-        let activity = summary(pool, now_unix()).await.ok()?;
+        // Re-checked per call: the snapshotter replaces the file as it runs.
+        let pool = self.stats.pool().await?;
+        let activity = summary(&pool, now_unix()).await.ok()?;
         *self.cache.lock().await = Some((Instant::now(), activity.clone()));
         Some(activity)
     }

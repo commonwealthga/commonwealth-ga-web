@@ -47,9 +47,10 @@ pub struct BoardQuery {
     offset: Option<u32>,
 }
 
-fn stats_pool(state: &AppState) -> ApiResult<&SqlitePool> {
+async fn stats_pool(state: &AppState) -> ApiResult<SqlitePool> {
     state
         .stats_pool()
+        .await
         .ok_or_else(|| AppError::Unavailable("live game database".to_string()))
 }
 
@@ -58,7 +59,8 @@ pub async fn directory(
     State(state): State<Arc<AppState>>,
     Query(query): Query<DirectoryQuery>,
 ) -> ApiResult<Response> {
-    let live = stats_pool(&state)?;
+    let live = stats_pool(&state).await?;
+    let live = &live;
     let limit = query
         .limit
         .unwrap_or(PAGE_LIMIT_DEFAULT)
@@ -86,7 +88,8 @@ pub async fn profile(
     State(state): State<Arc<AppState>>,
     Path(raw_id): Path<String>,
 ) -> ApiResult<Response> {
-    let live = stats_pool(&state)?;
+    let live = stats_pool(&state).await?;
+    let live = &live;
     let Ok(user_id) = raw_id.parse::<i64>() else {
         return Err(AppError::NotFound("agent".to_string()));
     };
@@ -106,7 +109,8 @@ pub async fn matches(
     Path(raw_id): Path<String>,
     Query(query): Query<AgentMatchesQuery>,
 ) -> ApiResult<Response> {
-    let live = stats_pool(&state)?;
+    let live = stats_pool(&state).await?;
+    let live = &live;
     let Ok(user_id) = raw_id.parse::<i64>() else {
         return Err(AppError::NotFound("agent".to_string()));
     };
@@ -141,7 +145,8 @@ pub async fn history(
     Path(raw_id): Path<String>,
     Query(query): Query<HistoryQuery>,
 ) -> ApiResult<Response> {
-    let live = stats_pool(&state)?;
+    let live = stats_pool(&state).await?;
+    let live = &live;
     let Ok(user_id) = raw_id.parse::<i64>() else {
         return Err(AppError::NotFound("agent".to_string()));
     };
@@ -159,7 +164,8 @@ pub async fn leaderboard(
     State(state): State<Arc<AppState>>,
     Query(query): Query<BoardQuery>,
 ) -> ApiResult<Response> {
-    let live = stats_pool(&state)?;
+    let live = stats_pool(&state).await?;
+    let live = &live;
     let limit = query
         .limit
         .unwrap_or(PAGE_LIMIT_DEFAULT)
