@@ -186,10 +186,7 @@ async fn fake_control_server() -> (String, Arc<tokio::sync::Mutex<Option<String>
             let mut raw = Vec::new();
             let mut buf = [0_u8; 4096];
             // Read until the declared body has arrived.
-            loop {
-                let Ok(read) = socket.read(&mut buf).await else {
-                    break;
-                };
+            while let Ok(read) = socket.read(&mut buf).await {
                 if read == 0 {
                     break;
                 }
