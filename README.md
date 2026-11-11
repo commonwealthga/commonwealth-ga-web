@@ -312,6 +312,11 @@ release and its compose files without flipping `current` or starting anything â€
 useful for staging a release before a cutover. The default, `true`, is the
 normal deploy.
 
+## Operations
+
+The deploy/cutover/rollback sequences, the certificate renewal switch and the
+fail2ban settings are in [docs/RUNBOOK.md](docs/RUNBOOK.md).
+
 ## Licence
 
 Source-available under the [PolyForm Shield License 1.0.0](LICENSE): read it,
