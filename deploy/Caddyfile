@@ -15,6 +15,11 @@
 {$SITE_ADDRESS::443} {
 	tls {$TLS_CERT} {$TLS_KEY}
 
+	# Access log to stdout (docker logs). Crawler problems are the kind you only
+	# see in a request log: whether the request arrived at all, and what it got.
+	# Container log size is capped in docker-compose.yml.
+	log
+
 	reverse_proxy {$UPSTREAM:web:8080} {
 		# Server-sent events: pass each event straight through. Caddy buffers by
 		# default, which would hold the live feed until the buffer fills.

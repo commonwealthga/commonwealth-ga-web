@@ -126,6 +126,12 @@ services:
       - ${CERT_DIR:-./deploy/certs}:/certs:ro
       # Webroot for Let's Encrypt HTTP-01 renewals (see deploy/Caddyfile).
       - ${ACME_WEBROOT:-./deploy/acme}:/var/www/certbot:ro
+    logging:
+      # The edge logs every request now, so the log needs a size cap.
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   web-node-modules:
