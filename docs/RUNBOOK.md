@@ -166,6 +166,27 @@ added here must do the same, or be behind Caddy.
 `--dry-run` exercises the webroot path through Caddy. It fails if the edge is
 down or its `http://:80` block is missing, which is the point.
 
+## The dashboard
+
+`~/dashboard` runs compose project `dashboard` (container `ga-dashboard`, port
+8443) and is **not** a plain `docker compose up` project: its base file is
+`docker-compose.host.yml`, because it needs `network_mode: host` to reach the
+control server's IPC port on `127.0.0.1:8999` and the settings API on `:19020`.
+
+Always name both files, or it silently comes up on a bridge network where
+`127.0.0.1` is the container itself and every control-server call fails with
+`Connection refused`:
+
+```bash
+cd ~/dashboard && docker compose -p dashboard -f docker-compose.host.yml \
+  -f docker-compose.override.yml --project-directory ~/dashboard up -d
+docker inspect ga-dashboard --format '{{.HostConfig.NetworkMode}}'   # must say: host
+```
+
+Its certificate is the Let's Encrypt lineage (`DASHBOARD_TLS_CERT`/`_KEY` in the
+override, `/etc/letsencrypt` mounted read-only), because HSTS on the site covers
+the whole host — see above.
+
 ## fail2ban
 
 `/etc/fail2ban/jail.local` on the box is stricter than Debian's defaults:
