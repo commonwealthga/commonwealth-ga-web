@@ -24,15 +24,15 @@ services:
       WEB_CONTROL_API_TOKEN: "${WEB_CONTROL_API_TOKEN}"
       # Token in the path of /db-export/<token>. Empty disables the route.
       WEB_DB_EXPORT_TOKEN: "${WEB_DB_EXPORT_TOKEN}"
-    # uid/gid of the account that owns ${WEB_HOST_HOME}/games on the VPS.
+    # uid/gid of the account that owns ${WEB_DATA_HOME}/games on the VPS.
     user: "${WEB_UID}:${WEB_GID}"
     volumes:
-      - ${WEB_HOST_HOME}/games:/data:ro
-      - ${WEB_HOST_HOME}/website/site-data:/site-data
+      - ${WEB_DATA_HOME}/games:/data:ro
+      - ${WEB_DATA_HOME}/website/site-data:/site-data
       # /files/* downloads: the previous site's directory, unchanged, so the
       # launcher's existing URLs keep working. Edit the contents in place --
       # the server reads them per request, so there is nothing to restart.
-      - ${WEB_HOST_HOME}/public/files:/srv/files:ro
+      - ${WEB_DATA_HOME}/public/files:/srv/files:ro
 
   edge:
     cpuset: "0"

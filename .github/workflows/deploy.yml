@@ -19,6 +19,11 @@ on:
         required: false
         type: string
         default: 'master'
+      start:
+        description: 'Bring the release up after uploading it (false prepares the files only)'
+        required: false
+        type: boolean
+        default: true
 
 concurrency:
   group: deploy
@@ -143,15 +148,21 @@ jobs:
           tar czf /tmp/site.tar.gz \
             --exclude=.git --exclude=target --exclude=web/node_modules \
             --exclude=web/build --exclude=web/.svelte-kit .
-          envsubst '${WEB_UID} ${WEB_GID} ${WEB_HOST_HOME} ${WEB_CONTROL_API_URL} ${WEB_CONTROL_API_TOKEN} ${WEB_DB_EXPORT_TOKEN}' \
+          test -n "${WEB_DATA_HOME}" || {
+            echo "::error::Set the repository variable WEB_DATA_HOME (e.g. /home/<data owner>)."
+            exit 1
+          }
+          envsubst '${WEB_UID} ${WEB_GID} ${WEB_DATA_HOME} ${WEB_CONTROL_API_URL} ${WEB_CONTROL_API_TOKEN} ${WEB_DB_EXPORT_TOKEN}' \
             < deploy/docker-compose.override.template.yml \
             > /tmp/docker-compose.override.yml
         env:
           WEB_UID: ${{ vars.WEB_UID || '1000' }}
           WEB_GID: ${{ vars.WEB_GID || '1000' }}
-          # Mount points live under the deploy account's home; keep the real
-          # username out of the public repo and derive it here.
-          WEB_HOST_HOME: /home/${{ secrets.DEPLOY_USER }}
+          # Where the mounted data lives (game DB, downloads, site-data). This
+          # is NOT the deploy account's home: CI logs in as an unprivileged
+          # account, and the data belongs to the admin account, so the path is
+          # a repository variable rather than something derived here.
+          WEB_DATA_HOME: ${{ vars.WEB_DATA_HOME }}
           # Optional: unset keeps the player-settings page read-only.
           WEB_CONTROL_API_URL: ${{ vars.WEB_CONTROL_API_URL }}
           WEB_CONTROL_API_TOKEN: ${{ secrets.WEB_CONTROL_API_TOKEN }}
@@ -164,7 +175,7 @@ jobs:
         run: |
           set -euo pipefail
           scp -q /tmp/site.tar.gz /tmp/docker-compose.override.yml gadeploy:/tmp/
-          ssh gadeploy bash -s -- "$RELEASE" "$IMAGE" "$IMAGE_TAG" <<'REMOTE_SCRIPT'
+          ssh gadeploy START="${{ inputs.start }}" bash -s -- "$RELEASE" "$IMAGE" "$IMAGE_TAG" <<'REMOTE_SCRIPT'
             set -euo pipefail
             NAME="$1"; IMAGE="$2"; TAG="$3"
             BASE="$HOME/website"
@@ -178,6 +189,12 @@ jobs:
             # symlink flip: the previous release directory already pins its own
             # tag.
             printf 'WEB_IMAGE=%s\nWEB_IMAGE_TAG=%s\n' "$IMAGE" "$TAG" > "$REL/.env"
+
+            if [ "${START:-true}" != "true" ]; then
+              echo "Prepared $REL without starting it (start=false)."
+              echo "current still points at: $(readlink -f "$BASE/current" || echo '(none)')"
+              exit 0
+            fi
 
             ln -sfn "$REL" "$BASE/current"
             cd "$BASE/current"
@@ -198,6 +215,7 @@ jobs:
           REMOTE_SCRIPT
 
       - name: Health check
+        if: ${{ inputs.start }}
         run: |
           set -euo pipefail
           for i in $(seq 1 12); do

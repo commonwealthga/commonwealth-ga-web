@@ -299,8 +299,18 @@ Found something? Please report it privately — a DM to a maintainer in
 | `DEPLOY_SSH_KEY` | Private key of the dedicated deploy keypair |
 | `DEPLOY_KNOWN_HOSTS` | `ssh-keyscan` pin of the VPS host key |
 
-Optional repository variables: `WEB_UID` / `WEB_GID` (default `1000`) — the uid
-and gid that own the mounted game database.
+Repository variables:
+
+| Variable | Meaning |
+|---|---|
+| `WEB_DATA_HOME` | **Required.** Home directory that holds the mounted data — `<home>/games`, `<home>/website/site-data`, `<home>/public/files`. This is deliberately *not* derived from `DEPLOY_USER`: the deploy account is unprivileged and the data belongs to the admin account. |
+| `WEB_CONTROL_API_URL` | Control server base URL for the player-settings relay. Unset leaves the page read-only. |
+| `WEB_UID` / `WEB_GID` | uid/gid the containers run as, matching the owner of the mounted files (default `1000`). |
+
+The deploy workflow also takes a `start` input. With `start: false` it uploads a
+release and its compose files without flipping `current` or starting anything —
+useful for staging a release before a cutover. The default, `true`, is the
+normal deploy.
 
 ## Licence
 
