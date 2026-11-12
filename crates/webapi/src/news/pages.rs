@@ -303,8 +303,7 @@ pub fn feed(data: &FeedData, chrome: &Chrome, stylesheets: &[String], base: &str
     let posts = data.approved;
     let hint = &data.hint;
     let canonical = format!("{base}/news");
-    let description =
-        "News, articles, server updates and videos posted by the Commonwealth Global Agenda community.";
+    let description = "News, articles, server updates and videos posted by the Commonwealth Global Agenda community.";
 
     let mut body = String::from(
         "<div class=\"flex flex-col gap-2\">\
@@ -333,7 +332,7 @@ pub fn feed(data: &FeedData, chrome: &Chrome, stylesheets: &[String], base: &str
             "Nothing published yet. The first post could be yours."
         };
         body.push_str(&format!(
-            "<p class=\"mt-10 border border-line/60 bg-carbon/40 p-6 text-sm text-dim\">{message}</p>"
+            "<p class=\"panel-ticks mt-10 border border-line/60 bg-carbon/40 p-6 text-sm text-dim\">{message}</p>"
         ));
     } else {
         body.push_str("<ul class=\"mt-10 flex flex-col gap-3\">");
@@ -362,7 +361,7 @@ pub fn feed(data: &FeedData, chrome: &Chrome, stylesheets: &[String], base: &str
 
 fn posting_box(hint: &PostingHint) -> String {
     if hint.may_post {
-        return "<div class=\"mt-8 flex flex-wrap items-center gap-3 border border-line/60 bg-carbon/40 p-4\">\
+        return "<div class=\"panel-ticks mt-8 flex flex-wrap items-center gap-3 border border-line/60 bg-carbon/40 p-4\">\
 <a class=\"heading border border-ember/60 px-4 py-2 text-sm tracking-[0.1em] text-ember transition-colors hover:bg-ember hover:text-void\" href=\"/news/submit\">Write a post</a>\
 <span class=\"label text-faint\">Reviewed by a moderator before it goes live</span>\
 </div>"
@@ -379,7 +378,7 @@ fn posting_box(hint: &PostingHint) -> String {
         "<a class=\"heading ml-2 underline decoration-ember/60 underline-offset-4 hover:text-ember\" href=\"/login\">Sign in</a>".to_string()
     };
     format!(
-        "<div class=\"mt-8 border border-line/60 bg-carbon/40 p-4 text-sm text-dim\">{}{action}</div>",
+        "<div class=\"panel-ticks mt-8 border border-line/60 bg-carbon/40 p-4 text-sm text-dim\">{}{action}</div>",
         escape(reason)
     )
 }
@@ -389,7 +388,7 @@ fn review_queue(pending: &[Post]) -> String {
     let mut items = String::new();
     for post in pending {
         items.push_str(&format!(
-            "<li data-pending=\"{id}\" class=\"border border-amber/40 bg-carbon/40\">\
+            "<li data-pending=\"{id}\" class=\"panel-ticks border border-amber/40 bg-carbon/40\">\
 <div class=\"flex flex-col gap-3 p-5\">\
 <p class=\"label text-faint\"><span class=\"text-amber\">{author}</span> posted {phrase} · {date}</p>\
 {title}\
@@ -480,7 +479,7 @@ fn card(post: &Post, reacted: bool, pending: bool) -> String {
     };
 
     format!(
-        "<li id=\"post-{id}\" class=\"border {} bg-carbon/40 p-5\">{header}{title}{summary}{body}{videos}{reactions}</li>",
+        "<li id=\"post-{id}\" class=\"panel-ticks border {} bg-carbon/40 p-5\">{header}{title}{summary}{body}{videos}{reactions}</li>",
         if pending {
             "border-amber/40"
         } else {
@@ -507,7 +506,7 @@ fn video_grid(videos: &[String]) -> String {
     for id in videos {
         let id = escape(id);
         out.push_str(&format!(
-            "<div class=\"border border-line/60\"><iframe class=\"aspect-video w-full\" \
+            "<div class=\"panel-ticks border border-line/60\"><iframe class=\"aspect-video w-full\" \
 src=\"https://www.youtube-nocookie.com/embed/{id}\" title=\"Video\" loading=\"lazy\" \
 allow=\"accelerometer; encrypted-media; picture-in-picture\" allowfullscreen></iframe></div>"
         ));
@@ -788,6 +787,57 @@ mod tests {
         assert!(
             page.contains("the queue above is waiting for your review"),
             "the empty-feed line does not contradict the queue"
+        );
+    }
+
+    /// The house rule: a bordered box that is not a link carries the corner
+    /// ticks; a box that is a link does not.
+    #[test]
+    fn every_box_that_is_not_a_link_has_the_corner_ticks() {
+        let post = video(&["dQw4w9WgXcQ"]);
+        let page = feed_page(&[post], &[pending_article()], true);
+
+        for (what, needle) in [
+            (
+                "a feed entry",
+                "<li id=\"post-20\" class=\"panel-ticks border",
+            ),
+            (
+                "a queue item",
+                "<li data-pending=\"12\" class=\"panel-ticks border",
+            ),
+            (
+                "the posting box",
+                "class=\"panel-ticks mt-8 flex flex-wrap items-center gap-3 border",
+            ),
+            (
+                "a video frame",
+                "<div class=\"panel-ticks border border-line/60\">",
+            ),
+        ] {
+            assert!(
+                page.contains(needle),
+                "{what} has no corner ticks: {needle}"
+            );
+        }
+
+        // An empty feed is a box too.
+        let empty = feed_page(&[], &[], false);
+        assert!(
+            empty.contains("<p class=\"panel-ticks mt-10 border"),
+            "the empty-state message has no corner ticks"
+        );
+
+        // The other half of the rule: the one box that is a link — the button to
+        // the submission form — is plain.
+        let anchor = page
+            .split("<a ")
+            .find(|chunk| chunk.contains("Write a post"))
+            .and_then(|chunk| chunk.split('>').next())
+            .expect("the submission link");
+        assert!(
+            !anchor.contains("panel-ticks"),
+            "a link does not get ticks: {anchor}"
         );
     }
 

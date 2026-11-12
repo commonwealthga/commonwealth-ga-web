@@ -289,7 +289,7 @@
 					</label>
 
 					{#if unusableLinks.length > 0}
-						<p class="border border-red/50 bg-red-deep/20 px-3 py-2 text-sm text-ink">
+						<p class="panel-ticks border border-red/50 bg-red-deep/20 px-3 py-2 text-sm text-ink">
 							Not a YouTube address: {unusableLinks.join(', ')}
 						</p>
 					{/if}
@@ -298,7 +298,7 @@
 						<div class="grid gap-3 sm:grid-cols-2">
 							{#each links as link (link)}
 								{#if youtubeId(link)}
-									<div class="border border-line/60">
+									<div class="panel-ticks border border-line/60">
 										<iframe
 											class="aspect-video w-full"
 											src="https://www.youtube-nocookie.com/embed/{youtubeId(link)}"
@@ -374,7 +374,7 @@
 					</div>
 
 					{#if preview}
-						<div class="border border-line/60 bg-carbon/40 p-4">
+						<div class="panel-ticks border border-line/60 bg-carbon/40 p-4">
 							<span class="label text-faint">Preview</span>
 							<div class="mt-2 flex flex-col gap-3 text-sm leading-relaxed text-dim">
 								{@html preview}
@@ -384,7 +384,7 @@
 				{/if}
 
 				{#if problem}
-					<p class="border border-red/50 bg-red-deep/20 px-3 py-2 text-sm text-ink">{problem}</p>
+					<p class="panel-ticks border border-red/50 bg-red-deep/20 px-3 py-2 text-sm text-ink">{problem}</p>
 				{/if}
 
 				<div class="flex items-center gap-4">
