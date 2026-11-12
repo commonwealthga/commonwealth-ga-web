@@ -144,10 +144,13 @@
 			type="button"
 			onclick={like}
 			aria-pressed={reactedNow}
-			aria-label="Thumbs up"
-			class="heading flex items-center gap-2 border border-line/70 px-3 py-1.5 text-sm tracking-[0.1em] text-dim transition-colors hover:border-ember/60 hover:text-ink"
+			aria-label={reactedNow ? 'Remove your thumbs up' : 'Thumbs up'}
+			title={reactedNow ? 'You liked this — click to undo' : 'Like this post'}
+			class="heading flex items-center gap-2 border px-3 py-1.5 text-sm tracking-[0.1em] transition-colors {reactedNow
+				? 'border-ember/60 bg-ember/10 text-ember hover:border-ember hover:bg-ember/15'
+				: 'border-line/70 text-dim hover:border-ember/60 hover:text-ink'}"
 		>
-			<span aria-hidden="true">👍</span><span>{count}</span>
+			<span aria-hidden="true">👍</span><span class={reactedNow ? 'text-ember' : ''}>{count}</span>
 		</button>
 		<span class="label text-faint">{notice}</span>
 	</div>
