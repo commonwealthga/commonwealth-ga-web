@@ -56,11 +56,17 @@ ticker hide that completely.
 
 ## Request path
 
+Two processes behind one hostname: the edge sends the paths below to the Rust
+API and everything else to SvelteKit's Node server.
+
 ```
-GET /api/status     → StatusService { override file → TTL cache → live DB }
-GET /api/live       → SSE: current value immediately, then broadcast ticks
-GET /api/health     → SELECT 1 against the live pool
-GET /anything/else  → ServeDir(web/build) → fallback 200.html
+api   GET /api/status   → StatusService { override file → TTL cache → live DB }
+api   GET /api/live     → SSE: current value immediately, then broadcast ticks
+api   GET /api/health   → SELECT 1 against the live pool
+api   GET /files/*      → download directory, straight from disk
+api   GET /sitemap.xml  → generated page list
+api   GET /<anything>   → JSON 404 (it is not the website)
+web   GET /<anything>   → server-rendered SvelteKit page
 ```
 
 One background task owns the ticker: it recomputes the status every
@@ -76,9 +82,9 @@ queue gets the mission layout, where the statistics and the map are the story.
 Both carry the same participant rows, so nothing the PvE view shows is lost in
 the PvP one.
 
-The page itself (`web/src/routes/missions/[id]`) is a client-side route: which
-layout applies is only knowable from the database at request time, so it is
-served through the `200.html` shell rather than prerendered.
+The page itself (`web/src/routes/missions/[id]`) renders on the client: which
+layout applies is only knowable from the database at request time, and fetching
+that in the browser keeps the shell identical for every match.
 
 ### Player settings: the site relays, the control server decides
 
@@ -98,21 +104,29 @@ live action when the player is online.
 With `WEB_CONTROL_API_URL` unset the page still renders — values, notes, and a
 "read-only for now" notice — so a deployment can adopt this at its own pace.
 
-### Rendering split
+### One rendering model
 
-`adapter-static` in `web/svelte.config.js` produces:
+`adapter-node` in `web/svelte.config.js`: the site is a Node process, and every
+page is server-rendered. There is no prerendered build and no app shell, and
+therefore no second way for a page to come into existence.
 
-- **prerendered pages** (`/`, and future content pages) as real HTML — fast
-  first paint, indexable, no JS needed to read them;
-- **`200.html`** — the app shell used for any path with no prerendered file.
+This is what makes the news feed work. A post is written after any build could
+have run, so a static site could only reach it by re-rendering in the browser,
+which no crawler does. `/news` therefore has a `+page.server.ts` that fetches the
+first page from the API with the visitor's cookie: the HTML that leaves the
+server contains every entry in full. The browser that receives that HTML
+navigates client-side from then on, so crossing into or out of the feed is not a
+page load, and the site chrome exists once, in the layout.
 
-The server's static fallback is `200.html`, *not* `index.html`. Falling back to
-`index.html` would serve the prerendered landing page for `/match/123` and
-hydrate the wrong document. Interactive routes opt out explicitly
-(`src/routes/app/+page.ts`: `prerender = false`, `ssr = false`).
+Pages that read the API in the browser (`/agents`, `/missions/[id]`,
+`/leaderboard`) still render their shell on the server and fill in on mount —
+which is now hydration rather than a shell fetched as a file.
 
-Compression is applied to the static file service only. A compression layer in
-front of the SSE stream would buffer it.
+An earlier design split the two: static pages plus a Rust-rendered news section.
+It was crawlable, and it cost two renderers, two copies of the chrome, and a full
+reload whenever you crossed the seam. `scripts/smoke-ssr.sh` exists so the
+property that design was protecting cannot quietly break again: it seeds an entry
+and greps the server's HTML for it.
 
 ## Data model worth knowing
 

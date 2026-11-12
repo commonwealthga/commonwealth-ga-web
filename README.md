@@ -15,9 +15,9 @@ until this one is cut over.
 
 | Layer | Choice | Why |
 |---|---|---|
-| API / app server | Rust, `axum` + `tokio` + `sqlx` (SQLite) | One small binary that serves the API, the live feed and the built frontend; heavy aggregate queries over a 200 MB DB without a per-request connection cost |
+| API | Rust, `axum` + `tokio` + `sqlx` (SQLite) | One small binary for the JSON API, the live feed, downloads and the database export; heavy aggregate queries over a 200 MB DB without a per-request connection cost |
 | Live data | Server-sent events | One process-wide ticker fans out to every client; no WebSocket plumbing for a one-way feed |
-| Frontend | SvelteKit 2 / Svelte 5, Tailwind CSS v4, `adapter-static` | Prerendered content pages plus an app shell, small payloads on mobile, no Node in production |
+| Frontend | SvelteKit 2 / Svelte 5, Tailwind CSS v4, `adapter-node` | One rendering model for the site: every page is server-rendered (so the news feed is crawlable and a post written this morning is in the HTML this morning) and client-side navigated, with no page reloads at any seam |
 | Edge | Caddy | TLS with the host's existing Let's Encrypt certificates, HTTP/2 + HTTP/3, SSE-safe proxying |
 | Deploy | GitHub Actions → GHCR → VPS pull | A deploy is a pull and a container swap, not a Rust compile on the game server |
 
@@ -69,8 +69,8 @@ Docker build and CI always use Node 22.
 To run the production shape locally instead:
 
 ```sh
-cd web && npm run build          # writes web/build
-WEB_DB_LIVE=/path/to/server.db WEB_STATIC_DIR=web/build cargo run
+WEB_DB_LIVE=/path/to/server.db cargo run          # the API on :8080
+cd web && npm run dev                             # the site on :5173
 ```
 
 Or the container (compose **v2** is required — `docker compose`):
@@ -132,7 +132,6 @@ It needs a built `webapi` and `web/build` first; both jobs above produce them.
 | `WEB_NEWS_POSTING_MODE` | `open` | Who may submit news: `open` or `allowlisted` (holders of `news_allowlisted` only). Anything else refuses to start |
 | `WEB_SITE_URL` | `https://commonwealth.ydns.eu` | Absolute base for canonical links and the sitemap |
 | `WEB_DB_SITE` | — | Website-owned read-write DB |
-| `WEB_STATIC_DIR` | `web/build` | Built frontend |
 | `WEB_FILES_DIR` | `files` | Downloads served under `/files/*` |
 | `WEB_STATUS_TTL_SECS` | `60` | How long a player count may be reused |
 | `WEB_LIVE_TICK_SECS` | `15` | How often the live feed recomputes |
@@ -207,9 +206,9 @@ it just quietly loses a feature, so the deploy warns when either is empty.
 | `/api/auth/login` · `/api/auth/logout` · `/api/auth/me` | Sign-in with in-game credentials (see below) |
 | `/api/me/matches` · `/api/me/summary` | The signed-in player's own matches and career totals (401 without a session) |
 | `/files/*` | **Public contract.** Download directory: restored maps and other archives the launcher fetches |
-| everything else | The built SvelteKit app: prerendered pages, `200.html` shell for client-side routes |
+| everything else | Not this process: the site belongs to SvelteKit's Node server, and the edge routes here only the paths above |
 
-Unknown `/api/*` paths answer JSON 404 — they never fall through to the SPA.
+Unknown paths answer JSON 404 — this process never pretends to be the website.
 
 `/files/*` is served straight from disk on every request: drop an archive into
 the directory (or replace one) and it is downloadable immediately, with no
@@ -337,27 +336,29 @@ pages.
 ## Running locally
 
 ```bash
-./scripts/dev.sh            # the API on http://127.0.0.1:8080
-cd web && npm run dev       # the site on http://127.0.0.1:5173, proxying /api
-./scripts/dev.sh --stop     # stop the API again
-./scripts/dev.sh --restart  # stop it, then start (picks up Rust changes)
+./scripts/dev.sh            # site on :5173, API on :8080 — one command, both processes
+./scripts/dev.sh --stop     # stop both
+./scripts/dev.sh --restart  # stop, then start (picks up Rust changes)
+./scripts/dev.sh --api-only # just the API
 ```
 
-The site is a Node process in production too, so `npm run dev` is the real
-development loop: Svelte changes reload instantly, and the proxied `/api` keeps
-the session cookie first-party. To run the built site the way the edge does:
+Open `127.0.0.1:5173`. The site is the other process, so `:8080` is not the
+website — it answers JSON, and its `/` is a deliberate 404. Svelte changes reload
+instantly through Vite, and the proxied `/api` keeps the session cookie
+first-party. To run the built site the way the edge does:
 
 ```bash
 cd web && npm run build
 PORT=3000 ORIGIN=http://127.0.0.1:3000 API_ORIGIN=http://127.0.0.1:8080 node build
 ```
 
-Stopping is one command because the alternative is not obvious: the server holds
+Stopping is one command because the alternative is not obvious: the API holds
 open the server-sent-event connections from any browser tab, and a graceful
-shutdown would wait on a stream that never ends. So `Ctrl-C` drains (the SSE
-streams are hung up for you), a **second** `Ctrl-C` exits immediately, and a
-5-second backstop exits regardless. `--stop` sends `SIGTERM`, waits the same
-grace, and only then uses `SIGKILL`.
+shutdown would wait on a stream that never ends. `Ctrl-C` stops the site and the
+API together (the dev script supervises both, and sends `SIGTERM` then `SIGKILL`
+if a process lingers); `./scripts/dev.sh --stop` does the same from another
+terminal. The API on its own drains on `SIGTERM`, exits immediately on a second
+`Ctrl-C`, and has a 5-second backstop regardless.
 
 The script builds if needed, points at the game server repo's `server.db`, and
 reads the control server's `admin_token` out of its `control-server.json` so

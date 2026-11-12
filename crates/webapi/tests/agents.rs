@@ -161,7 +161,6 @@ impl Harness {
                 live_db: Some(live_path.clone()),
                 snapshot_db: None,
                 site_db: None,
-                static_dir: self.path("static"),
                 files_dir: self.path("files"),
                 status_ttl: std::time::Duration::from_secs(0),
                 live_tick: std::time::Duration::from_secs(15),

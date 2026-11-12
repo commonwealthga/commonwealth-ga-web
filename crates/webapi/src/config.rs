@@ -20,9 +20,6 @@ pub struct Config {
     pub snapshot_db: Option<PathBuf>,
     /// Website-owned read-write database (accounts, sessions, user content).
     pub site_db: Option<PathBuf>,
-    /// Built frontend (`web/build`). Served as static assets with an SPA
-    /// fallback.
-    pub static_dir: PathBuf,
     /// Download directory served under `/files/*` — restored map archives the
     /// launcher fetches. Read from disk per request so files can be added or
     /// replaced without a restart.
@@ -77,7 +74,6 @@ impl Config {
     pub fn from_env() -> Self {
         let live_db = env_path("WEB_DB_LIVE");
         let site_db = env_path("WEB_DB_SITE");
-        let static_dir = env_path("WEB_STATIC_DIR").unwrap_or_else(|| PathBuf::from("web/build"));
         Self {
             bind: env("WEB_BIND", "0.0.0.0:8080")
                 .parse()
@@ -91,7 +87,6 @@ impl Config {
             snapshot_db: env_path("WEB_DB_SNAPSHOT"),
             site_db,
             files_dir: crate::files::resolve_dir(env_path("WEB_FILES_DIR")),
-            static_dir,
             status_ttl: env_duration("WEB_STATUS_TTL_SECS", 60),
             live_tick: env_duration("WEB_LIVE_TICK_SECS", 15),
             match_ttl: env_duration("WEB_MATCH_TTL_SECS", 30),

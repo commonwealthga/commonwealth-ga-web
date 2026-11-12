@@ -22,20 +22,14 @@ pub mod sitemap;
 pub mod snapshot;
 pub mod status;
 
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
-use axum::extract::{Request, State};
-use axum::http::{StatusCode, Uri, header};
-use axum::middleware::{Next, from_fn_with_state};
-use axum::response::{IntoResponse, Response};
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use sqlx::SqlitePool;
 use tokio::sync::broadcast;
-use tower::ServiceBuilder;
-use tower_http::compression::CompressionLayer;
-use tower_http::services::ServeDir;
 use tower_http::trace::{DefaultOnFailure, TraceLayer};
 
 use crate::activity::ActivityService;
@@ -168,34 +162,25 @@ impl AppState {
 
 /// Assemble the full router: API routes first, then the static frontend with
 /// an SPA fallback so client-side routes survive a hard refresh.
+/// Assemble the router.
+///
+/// This process is the API: JSON, the download directory, the redacted
+/// database, the sitemap. The pages belong to SvelteKit's Node server, which the
+/// edge routes to, so there is no static file serving here and no app shell to
+/// fall back to — an unknown path is a 404, which is what a stranger poking at
+/// it should get.
 pub fn app(state: Arc<AppState>) -> Router {
-    let static_dir = state.cfg.static_dir.clone();
-    // SvelteKit's `adapter-static` emits prerendered pages as real files plus a
-    // `200.html` app shell. Falling back to the shell (not `index.html`) keeps
-    // the prerendered landing page intact while still letting client-side
-    // routes survive a hard refresh.
-    //
-    // Compression is scoped to the static assets on purpose: a compression layer
-    // in front of the SSE stream would buffer it and defeat the whole point of
-    // server-sent events.
-    let assets = ServiceBuilder::new()
-        .layer(CompressionLayer::new())
-        .service(ServeDir::new(&static_dir));
-
     Router::new()
-        // Nested so the API keeps its own JSON 404 and `/api/*` never reaches
-        // the file server.
+        // Nested so the API keeps its own JSON 404 and `/api/*` never wanders.
         .nest("/api", routes::api())
         // Download directory: the launcher depends on these paths, so they are
-        // served verbatim, straight from disk, with no restart needed when
-        // files are added or replaced.
+        // served verbatim, straight from disk, with no restart needed when files
+        // are added or replaced.
         .nest_service("/files", files::service(state.cfg.files_dir.clone()))
-        // The redacted database, at the root because that is where third
-        // parties already look for it (the previous site used the same URL).
-        // A wrong token must never fall through to the SPA shell.
+        // The redacted database, at the root because that is where third parties
+        // already look for it (the previous site used the same URL).
         .route("/db-export/{token}", axum::routing::get(export::download))
-        // The bare path must not fall through to the app shell: a stranger
-        // poking at it should get "no such thing", not a web page.
+        // The bare path gets "no such thing" rather than a web page.
         .route("/db-export", axum::routing::get(export::no_token))
         .route("/db-export/", axum::routing::get(export::no_token))
         // Generated here so the page list travels with the release that knows
@@ -204,8 +189,7 @@ pub fn app(state: Arc<AppState>) -> Router {
             "/sitemap.xml",
             axum::routing::get(routes::pages::sitemap_xml),
         )
-        .fallback_service(assets)
-        .layer(from_fn_with_state(Arc::clone(&state), html_suffix))
+        .fallback(not_found)
         // A 503 from a degraded route is an expected outcome, not a fault; the
         // error handler already logs genuine failures at ERROR with detail.
         .layer(
@@ -215,101 +199,14 @@ pub fn app(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
-/// Serve `<path>.html` for extensionless paths.
-///
-/// `adapter-static` writes prerendered pages as `server.html`, `matches.html`,
-/// and so on. Without this, `/server` misses the file and falls through to the
-/// `200.html` shell — which only renders with JavaScript, is invisible to
-/// crawlers, and leaves a blank first paint. Assets (anything with an
-/// extension) and the API are untouched.
-async fn html_suffix(
-    State(state): State<Arc<AppState>>,
-    mut request: Request,
-    next: Next,
-) -> Response {
-    let is_read = matches!(
-        *request.method(),
-        axum::http::Method::GET | axum::http::Method::HEAD
-    );
-    let path = request.uri().path().to_string();
-    let wants_html = is_read
-        && path.starts_with('/')
-        && !path.starts_with("/api/")
-        && !path.starts_with("/files/")
-        && !path.starts_with("/db-export")
-        && path != "/"
-        && !path.rsplit('/').next().unwrap_or_default().contains('.');
-
-    if wants_html {
-        // `adapter-static` writes prerendered pages as `server.html`, so an
-        // extensionless path has to be pointed at its real file. Without this,
-        // `/server` misses the file and is treated as unrouted.
-        let candidate = state.cfg.static_dir.join(format!(
-            "{}.html",
-            path.trim_end_matches('/').trim_start_matches('/')
-        ));
-        if tokio::fs::metadata(&candidate).await.is_ok() {
-            let mut parts = request.uri().clone().into_parts();
-            parts.path_and_query = Some(
-                format!("{}.html", path.trim_end_matches('/'))
-                    .parse()
-                    .expect("static html path is valid"),
-            );
-            if let Ok(uri) = Uri::from_parts(parts) {
-                *request.uri_mut() = uri;
-            }
-        }
-    }
-
-    let response = next.run(request).await;
-
-    // A miss on a page-shaped GET is not always a 404: routes that render on the
-    // client (agent profiles, missions, the leaderboard) exist only as the app
-    // shell. Serve that shell — but keep the status honest, so an unknown path
-    // ends up a real 404 for a crawler while the app still draws its error page.
-    if wants_html && response.status() == StatusCode::NOT_FOUND {
-        let status = if is_client_route(&path) {
-            StatusCode::OK
-        } else {
-            StatusCode::NOT_FOUND
-        };
-        return shell_response(&state.cfg.static_dir, status).await;
-    }
-
-    response
-}
-
-/// Routes that exist only in the browser bundle.
-///
-/// Everything else is either a prerendered file or a 404, and telling the two
-/// apart is what stops this site from answering 200 for every typo — the
-/// difference between a crawler indexing nine pages and indexing infinite
-/// garbage.
-fn is_client_route(path: &str) -> bool {
-    // Depth-zero routes plus the two detail routes. Prefixes include the
-    // trailing slash on purpose: matching "/agents" as a prefix made
-    // "/agents-are-not-real" a route, and a bare `starts_with` on a path is how
-    // that happens.
-    const EXACT: [&str; 4] = ["/agents", "/leaderboard", "/settings", "/me"];
-    const PREFIXES: [&str; 2] = ["/agents/", "/missions/"];
-    let path = path.trim_end_matches('/');
-    let path = if path.is_empty() { "/" } else { path };
-    EXACT.contains(&path) || PREFIXES.iter().any(|prefix| path.starts_with(prefix))
-}
-
-/// The app shell, at whatever status the caller decided.
-async fn shell_response(static_dir: &Path, status: StatusCode) -> Response {
-    match tokio::fs::read(static_dir.join("200.html")).await {
-        Ok(body) => (
-            status,
-            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-            body,
-        )
-            .into_response(),
-        Err(error) => {
-            // No shell on disk is a deployment fault, not a routing one.
-            tracing::error!(%error, "app shell missing");
-            (status, "not found").into_response()
-        }
-    }
+/// Anything unrouted: JSON, so a wrong URL reads as an API that does not know
+/// the path rather than as a web page gone missing.
+async fn not_found() -> impl IntoResponse {
+    (
+        StatusCode::NOT_FOUND,
+        axum::Json(serde_json::json!({
+            "error": "not found",
+            "hint": "pages are served by another process; this one is the API",
+        })),
+    )
 }

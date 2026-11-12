@@ -1,21 +1,28 @@
 #!/usr/bin/env bash
-# Run the API against the local game database, with the player-settings endpoint
-# wired up so /settings can actually write.
+# Run the local site: the Rust API against the local game database, with the
+# player-settings endpoint wired up so /settings can actually write, and the
+# SvelteKit dev server in front of it.
 #
-# The site itself is a SvelteKit server now: run `npm run dev` in web/ alongside
-# this, and Vite proxies /api here. This script only starts the Rust process.
+# Two processes, one command:
+#   * the API       http://127.0.0.1:8080   (Rust; release build, rebuilt when stale)
+#   * the site      http://127.0.0.1:5173   (Vite, with hot reload; proxies /api)
+#
+# Open the site at 5173. There is nothing to see on 8080: it is the API, and it
+# answers JSON.
 #
 # The settings token is the control server's own admin_token. It is read out of
 # the control server's config at start time and never written anywhere: this
 # repo is public, and the config it comes from is gitignored for the same
 # reason.
 #
-#   ./scripts/dev.sh                 # http://127.0.0.1:8080
-#   ./scripts/dev.sh --stop          # stop a server this script started
-#   ./scripts/dev.sh --restart       # stop it, then start again
+#   ./scripts/dev.sh                 # site on :5173, API on :8080
+#   ./scripts/dev.sh --stop          # stop both
+#   ./scripts/dev.sh --restart       # stop, then start again
+#   ./scripts/dev.sh --api-only      # just the API (no Node needed)
 #   ./scripts/dev.sh --snapshot      # build a snapshot first, read stats from it
 #                                    # and enable /db-export/<token>
-#   PORT=9000 ./scripts/dev.sh       # somewhere else
+#   PORT=9000 ./scripts/dev.sh       # API somewhere else
+#   SITE_PORT=4000 ./scripts/dev.sh  # site somewhere else
 #   BIND=0.0.0.0 ./scripts/dev.sh    # reachable from your network
 #   SERVER_REPO=~/src/ga-server ./scripts/dev.sh
 #
@@ -88,16 +95,30 @@ fi
 # a local export token so /db-export is testable. Mirrors what the snapshotter
 # service does on a timer in production.
 snapshot_mode=0
+api_only=0
 for arg in "$@"; do
-  [[ "$arg" == "--snapshot" ]] && snapshot_mode=1
+  case "$arg" in
+    --snapshot) snapshot_mode=1 ;;
+    --api-only) api_only=1 ;;
+  esac
 done
+SITE_PORT="${SITE_PORT:-5173}"
 
 # Fail early and clearly if the port is taken — the raw bind error arrives after
 # the snapshot work, which makes it look like the snapshotter failed.
-if (command -v ss >/dev/null && ss -ltn 2>/dev/null | grep -q "[:.]$PORT\b"); then
-  echo "port $PORT is already in use." >&2
+port_taken() {
+  command -v ss >/dev/null && ss -ltn 2>/dev/null | grep -q "[:.]$1\b"
+}
+if port_taken "$PORT"; then
+  echo "port $PORT is already in use (the API)." >&2
   echo "Stop it:  ./scripts/dev.sh --stop" >&2
   echo "Or move:  PORT=8081 ./scripts/dev.sh$([[ $snapshot_mode -eq 1 ]] && echo ' --snapshot')" >&2
+  exit 1
+fi
+if [[ $api_only -eq 0 ]] && port_taken "$SITE_PORT"; then
+  echo "port $SITE_PORT is already in use (the site)." >&2
+  echo "Stop it:  ./scripts/dev.sh --stop" >&2
+  echo "Or move:  SITE_PORT=4000 ./scripts/dev.sh" >&2
   exit 1
 fi
 
@@ -142,7 +163,6 @@ fi
 # is read straight back: there is no snapshot in the middle.
 export WEB_DB_LIVE="${WEB_DB_LIVE:-$SERVER_REPO/server.db}"
 export WEB_DB_SITE="${WEB_DB_SITE:-$ROOT/site-data/site.db}"
-export WEB_STATIC_DIR="${WEB_STATIC_DIR:-$ROOT/web/build}"
 export WEB_BIND="$BIND:$PORT"
 export WEB_CONTROL_API_URL="${WEB_CONTROL_API_URL:-http://127.0.0.1:19020}"
 [[ -n "$token" ]] && export WEB_CONTROL_API_TOKEN="${WEB_CONTROL_API_TOKEN:-$token}"
@@ -150,16 +170,78 @@ export WEB_CONTROL_API_URL="${WEB_CONTROL_API_URL:-http://127.0.0.1:19020}"
 echo "live db : $WEB_DB_LIVE"
 echo "site db : $WEB_DB_SITE"
 echo "settings: $WEB_CONTROL_API_URL $([[ -n "${WEB_CONTROL_API_TOKEN:-}" ]] && echo '(token set)' || echo '(no token — read-only)')"
-echo "api     : http://$BIND:$PORT"
-echo "site    : cd web && npm run dev   (proxies /api to the line above)"
+echo "api     : http://$BIND:$PORT   (JSON only — this is not the website)"
+if [[ $api_only -eq 0 ]]; then
+  echo "site    : http://$BIND:$SITE_PORT   <-- open this"
+fi
 if [[ -n "${WEB_DB_SNAPSHOT:-}" ]]; then
   echo "stats   : from $WEB_DB_SNAPSHOT"
 fi
 if [[ -n "${WEB_DB_EXPORT_TOKEN:-}" ]]; then
   echo "export  : http://$BIND:$PORT/db-export/$WEB_DB_EXPORT_TOKEN"
 fi
-echo "stop    : ./scripts/dev.sh --stop   (or Ctrl-C twice)"
+echo "stop    : Ctrl-C, or ./scripts/dev.sh --stop"
+
 # Written after every check has passed: a pidfile for a server that never bound
 # would send `--stop` after the wrong process.
 echo $$ > "$PIDFILE"
-exec "$ROOT/target/release/webapi"
+
+if [[ $api_only -eq 1 ]]; then
+  exec "$ROOT/target/release/webapi"
+fi
+
+# The dev server needs its dependencies once. `npm ci` rather than `install` so
+# the lockfile wins, exactly as CI and the image do it.
+if [[ ! -d "$ROOT/web/node_modules" ]]; then
+  echo "installing frontend dependencies…" >&2
+  (cd "$ROOT/web" && npm ci --no-audit --no-fund)
+fi
+
+api_pid=""
+site_pid=""
+# Stop what we started, and nothing else. Vite is run directly rather than
+# through `npm run dev`: npm forks a shell that forks the server, and the pid we
+# hold would then be the one process that can die without the site dying.
+stop_children() {
+  trap - INT TERM
+  for pid in "$site_pid" "$api_pid"; do
+    [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
+  done
+  for _ in $(seq 1 50); do
+    alive=0
+    for pid in "$site_pid" "$api_pid"; do
+      [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null && alive=1
+    done
+    [[ $alive -eq 0 ]] && break
+    sleep 0.1
+  done
+  for pid in "$site_pid" "$api_pid"; do
+    [[ -n "$pid" ]] && kill -9 "$pid" 2>/dev/null || true
+  done
+  rm -f "$PIDFILE"
+}
+trap 'stop_children' INT TERM
+
+"$ROOT/target/release/webapi" &
+api_pid=$!
+
+# Give the API a moment to bind, so the first page load finds it: Vite proxies
+# /api, and a proxy to nothing is a confusing way to start a session.
+for _ in $(seq 1 40); do
+  curl -s -o /dev/null -m 1 "http://127.0.0.1:$PORT/api/health" 2>/dev/null && break
+  sleep 0.25
+done
+
+# The site. Hot reload for Svelte changes; /api goes to the process above.
+(
+  cd "$ROOT/web"
+  VITE_API_TARGET="http://127.0.0.1:$PORT" \
+    exec node node_modules/vite/bin/vite.js dev --host "$BIND" --port "$SITE_PORT"
+) &
+site_pid=$!
+
+# Whichever exits first ends the session: a half-running dev loop is worse than
+# none, because the half that is missing is not the one you are looking at.
+wait -n || true
+stop_children
+echo "stopped" >&2

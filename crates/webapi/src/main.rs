@@ -66,12 +66,6 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    if !cfg.static_dir.join("200.html").exists() {
-        tracing::warn!(
-            dir = %cfg.static_dir.display(),
-            "frontend build not found — run `npm run build` in web/ (or set WEB_STATIC_DIR)"
-        );
-    }
     if let Some(path) = &cfg.status_override {
         tracing::info!(file = %path.display(), "status override file (absent until created)");
     }

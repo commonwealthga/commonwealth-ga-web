@@ -44,11 +44,14 @@ PAGES=(
 [ "$#" -gt 0 ] && PAGES=("$@")
 
 SERVER_PID=""
+API_PID=""
 cleanup() {
-	if [ -n "$SERVER_PID" ]; then
-		kill "$SERVER_PID" 2>/dev/null || true
-		wait "$SERVER_PID" 2>/dev/null || true
-	fi
+	for pid in "$SERVER_PID" "$API_PID"; do
+		if [ -n "$pid" ]; then
+			kill "$pid" 2>/dev/null || true
+			wait "$pid" 2>/dev/null || true
+		fi
+	done
 }
 trap cleanup EXIT
 
@@ -60,13 +63,22 @@ if [ -z "${URL:-}" ]; then
 		exit 1
 	fi
 
-	WEB_BIND="0.0.0.0:$PORT" \
-		WEB_STATIC_DIR="${WEB_STATIC_DIR:-web/build}" \
-		"$BIN" >/tmp/shot-server.log 2>&1 &
+	# The site is a Node process; screenshot it, with the API behind it on its
+	# own port. `WEB_BIND=0.0.0.0` on both so the browser container can reach
+	# them through the docker bridge gateway.
+	API_BIN="$BIN"
+	API_PORT_INTERNAL="${API_PORT:-8080}"
+	WEB_BIND="0.0.0.0:$API_PORT_INTERNAL" "$API_BIN" >/tmp/shot-api.log 2>&1 &
+	API_PID=$!
+	PORT="$PORT" ORIGIN="http://127.0.0.1:$PORT" \
+		API_ORIGIN="http://127.0.0.1:$API_PORT_INTERNAL" \
+		node web/build/index.js >/tmp/shot-server.log 2>&1 &
 	SERVER_PID=$!
 
-	for _ in $(seq 1 60); do
-		curl -sf -o /dev/null "http://127.0.0.1:$PORT/api/health" && break
+	# Wait for the site, not the API: the API's health endpoint is not reachable
+	# through the Node server, which serves pages and nothing else.
+	for _ in $(seq 1 120); do
+		curl -sf -o /dev/null "http://127.0.0.1:$PORT/" && break
 		sleep 0.25
 	done
 	if ! kill -0 "$SERVER_PID" 2>/dev/null; then
@@ -76,7 +88,7 @@ if [ -z "${URL:-}" ]; then
 
 	GATEWAY=$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)
 	URL="http://${GATEWAY:-172.17.0.1}:$PORT"
-	echo "shot: serving ${WEB_STATIC_DIR:-web/build} at $URL"
+	echo "shot: serving the built site at $URL (api on :${API_PORT_INTERNAL:-8080})"
 fi
 
 rm -rf "$OUT"

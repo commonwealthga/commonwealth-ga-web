@@ -96,7 +96,6 @@ impl Harness {
             live_db,
             snapshot_db: None,
             site_db: None,
-            static_dir: self.path("static"),
             files_dir: self.path("static"),
             status_ttl: Duration::from_secs(60),
             live_tick: Duration::from_secs(15),
@@ -244,89 +243,6 @@ async fn health_reports_the_live_db_and_degrades_without_it() {
     let (status, _, body) = get(&broken, "/api/health").await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert!(body.contains("\"live_db\":false"), "got {body}");
-}
-
-#[tokio::test]
-async fn api_404s_as_json_and_client_routes_fall_back_to_the_shell() {
-    let harness = Harness::new();
-
-    // A built frontend: index.html plus one hashed asset.
-    let static_dir = harness.path("static");
-    std::fs::create_dir_all(&static_dir).expect("static dir");
-    std::fs::write(
-        static_dir.join("index.html"),
-        "<!doctype html><title>landing</title>",
-    )
-    .expect("index");
-    std::fs::write(
-        static_dir.join("200.html"),
-        "<!doctype html><title>shell</title>",
-    )
-    .expect("shell");
-
-    let (app, _) = harness.app_with_live_db().await;
-
-    // A typo'd API path must not be answered with the SPA shell.
-    let (status, content_type, _) = get(&app, "/api/nope").await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert!(
-        content_type.starts_with("application/json"),
-        "got {content_type}"
-    );
-
-    // The prerendered landing page wins for "/" ...
-    let (_, _, landing) = get(&app, "/").await;
-    assert!(landing.contains("landing"));
-
-    // ... and a client-side route falls back to the app shell, not the landing
-    // page, so the router hydrates against the right document.
-    let (status, content_type, body) = get(&app, "/agents/12345").await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(content_type.starts_with("text/html"), "got {content_type}");
-    assert!(body.contains("shell"), "got {body}");
-
-    // A path that is neither: the shell still ships so the app can render its
-    // error page, but the status is 404. Answering 200 here is what let a
-    // crawler index every typo as a page.
-    let (status, _, body) = get(&app, "/match/12345").await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert!(body.contains("shell"), "got {body}");
-}
-
-#[tokio::test]
-async fn static_assets_are_compressed() {
-    let harness = Harness::new();
-    let static_dir = harness.path("static");
-    std::fs::create_dir_all(&static_dir).expect("static dir");
-    // Comfortably above the compression predicate's minimum size.
-    let padding = "x".repeat(4_096);
-    std::fs::write(
-        static_dir.join("index.html"),
-        format!("<!doctype html><title>landing</title><p>{padding}</p>"),
-    )
-    .expect("index");
-
-    let (app, _) = harness.app_with_live_db().await;
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/")
-                .header(header::ACCEPT_ENCODING, "br")
-                .body(Body::empty())
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(
-        response
-            .headers()
-            .get(header::CONTENT_ENCODING)
-            .map(|v| v.to_str().unwrap()),
-        Some("br"),
-        "static assets should be brotli-compressed"
-    );
 }
 
 // --- recent matches ---------------------------------------------------------
@@ -559,42 +475,4 @@ async fn recent_matches_degrade_to_503_without_the_database() {
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert!(content_type.starts_with("application/json"));
     assert!(body.contains("error"), "got {body}");
-}
-
-#[tokio::test]
-async fn prerendered_pages_are_served_as_html_not_the_spa_shell() {
-    let harness = Harness::new();
-    let static_dir = harness.path("static");
-    std::fs::create_dir_all(&static_dir).expect("static dir");
-    std::fs::write(
-        static_dir.join("index.html"),
-        "<!doctype html><title>landing</title>",
-    )
-    .expect("index");
-    std::fs::write(
-        static_dir.join("server.html"),
-        "<!doctype html><title>network page</title>",
-    )
-    .expect("server page");
-    std::fs::write(
-        static_dir.join("200.html"),
-        "<!doctype html><title>shell</title>",
-    )
-    .expect("shell");
-
-    let (app, _) = harness.app_with_live_db().await;
-
-    // A prerendered page is served from its own file ...
-    let (status, content_type, body) = get(&app, "/server").await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(content_type.starts_with("text/html"), "got {content_type}");
-    assert!(body.contains("network page"), "got {body}");
-
-    // ... and a trailing slash resolves to the same file.
-    let (_, _, with_slash) = get(&app, "/server/").await;
-    assert!(with_slash.contains("network page"), "got {with_slash}");
-
-    // Unknown routes still get the shell, and assets are not rewritten.
-    let (_, _, unknown) = get(&app, "/nothing-here").await;
-    assert!(unknown.contains("shell"), "got {unknown}");
 }

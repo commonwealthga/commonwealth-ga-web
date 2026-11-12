@@ -79,7 +79,6 @@ impl Harness {
             live_db: Some(live_path),
             snapshot_db: None,
             site_db: None,
-            static_dir: self.path("static"),
             files_dir: self.path("files"),
             status_ttl: Duration::from_secs(0),
             live_tick: Duration::from_secs(15),
