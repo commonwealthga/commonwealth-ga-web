@@ -66,9 +66,12 @@
 	<meta name="twitter:description" content={description} />
 	<meta name="twitter:image" content={imageUrl} />
 
-	{#if noindex}
-		<meta name="robots" content="noindex, follow" />
-	{/if}
+	<!--
+		Always stated, never left to the default. Absent means "index, follow", so
+		this only repeats the default — but a page that is deliberately kept out of
+		the index says so in the same place, and there is no third case to guess at.
+	-->
+	<meta name="robots" content={noindex ? 'noindex, follow' : 'index, follow'} />
 
 	<!-- Built above, escaped there. -->
 	{@html jsonLd}
