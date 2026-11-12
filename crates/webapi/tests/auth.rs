@@ -173,6 +173,7 @@ impl Harness {
             control_api_url: None,
             control_api_token: None,
             db_export_token: None,
+            news_posting_mode: webapi::news::PostingMode::Open,
         };
 
         Fixtures {
@@ -415,6 +416,7 @@ async fn online_history_returns_parallel_arrays() {
         control_api_url: None,
         control_api_token: None,
         db_export_token: None,
+        news_posting_mode: webapi::news::PostingMode::Open,
     };
     let app = app(AppState::new(cfg, Some(pool), None, None));
 
@@ -481,6 +483,7 @@ async fn activity_window_zero_returns_everything() {
         control_api_url: None,
         control_api_token: None,
         db_export_token: None,
+        news_posting_mode: webapi::news::PostingMode::Open,
     };
     let app = app(AppState::new(cfg, Some(pool), None, None));
 

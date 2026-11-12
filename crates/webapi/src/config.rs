@@ -46,6 +46,9 @@ pub struct Config {
     /// Shared token for that endpoint. Never in the repo: it travels the same
     /// way the db-export token does, through the deploy-time override.
     pub control_api_token: Option<String>,
+    /// Whether anyone may submit news, or only accounts on the allowlist.
+    /// `WEB_NEWS_POSTING_MODE`: `open` (default) or `allowlisted`.
+    pub news_posting_mode: crate::news::PostingMode,
     /// Path token for `/db-export/{token}`. Absent means the route 404s, which
     /// is the right default: the redacted database should not be public just
     /// because nobody configured a secret.
@@ -92,6 +95,11 @@ impl Config {
             control_api_url: env_opt("WEB_CONTROL_API_URL"),
             control_api_token: env_opt("WEB_CONTROL_API_TOKEN"),
             db_export_token: env_opt("WEB_DB_EXPORT_TOKEN"),
+            news_posting_mode: crate::news::PostingMode::parse(&env(
+                "WEB_NEWS_POSTING_MODE",
+                "open",
+            ))
+            .unwrap_or_else(|error| panic!("WEB_NEWS_POSTING_MODE: {error}")),
         }
     }
 }

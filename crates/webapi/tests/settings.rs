@@ -116,6 +116,7 @@ impl Harness {
             control_api_url: control_url,
             control_api_token: Some("test-token".to_string()),
             db_export_token: None,
+            news_posting_mode: webapi::news::PostingMode::Open,
         }
     }
 

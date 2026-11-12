@@ -224,6 +224,7 @@ impl Harness {
             control_api_url: None,
             control_api_token: None,
             db_export_token: None,
+            news_posting_mode: webapi::news::PostingMode::Open,
         };
         (app(AppState::new(cfg, Some(pool), None, None)), live_path)
     }
@@ -383,6 +384,7 @@ async fn signing_in_marks_your_result_in_the_lists() {
                 control_api_url: None,
                 control_api_token: None,
                 db_export_token: None,
+                news_posting_mode: webapi::news::PostingMode::Open,
             },
             Some(pool),
             None,

@@ -15,6 +15,7 @@ pub mod history;
 pub mod match_detail;
 pub mod matches;
 pub mod mmr;
+pub mod news;
 pub mod routes;
 pub mod settings;
 pub mod snapshot;
