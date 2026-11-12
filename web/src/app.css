@@ -1,10 +1,5 @@
 @import 'tailwindcss';
 
-/* The news feed and post pages are rendered by the Rust server, not by
-   SvelteKit — their classes only reach the stylesheet if Tailwind scans the
-   templates. */
-@source '../../crates/webapi/src/news/pages.rs';
-
 /* ---------------------------------------------------------------------------
    Type: self-hosted (latin subsets, OFL — see /fonts/OFL-*.txt).
    --------------------------------------------------------------------------- */

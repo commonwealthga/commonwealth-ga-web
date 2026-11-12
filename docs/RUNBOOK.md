@@ -213,6 +213,30 @@ accounts may submit afterwards; existing posts are unaffected. Set it back to
 `open` and deploy to reopen. To stop one account instead, grant it
 `news_restricted` in the dashboard — no deploy needed.
 
+## Two services, one hostname
+
+The release runs four containers: `edge` (Caddy), `web` (Node, the SSR site),
+`api` (Rust, JSON + files + export) and `snapshotter`. The edge splits them by
+path — `/api/*`, `/files/*`, `/db-export*` and `/sitemap.xml` go to `api`,
+everything else to `web` — so the browser sees one origin and the session cookie
+stays first-party.
+
+What that changes when something breaks:
+
+```bash
+docker compose -p commonwealth-ga-web ps
+# the site renders but the API is dead  -> pages load, numbers and news do not
+# the API answers but the site is dead  -> /api/status works, pages 502
+curl -sS 127.0.0.1:8080/api/health     # api
+curl -sS 127.0.0.1:3000/ | head -5     # web
+docker compose -p commonwealth-ga-web logs --tail 50 web
+```
+
+`API_ORIGIN` (on `web`) is how the SSR server reaches the API inside the compose
+network; `ORIGIN` is the public address, used to reject cross-site form posts. If
+`ORIGIN` does not match the address in the browser, every form post fails with a
+cross-site error — that is the one setting to check after a domain change.
+
 ## The dashboard
 
 `~/dashboard` runs compose project `dashboard` (container `ga-dashboard`, port

@@ -78,7 +78,6 @@ pub struct AppState {
     /// the process open: a stream that never finishes is why the server ignored
     /// Ctrl-C.
     pub shutdown: broadcast::Sender<()>,
-
 }
 
 impl AppState {
@@ -167,27 +166,6 @@ impl AppState {
     }
 }
 
-/// Every CSS file the frontend build emitted, as URL paths.
-///
-/// SvelteKit content-hashes asset names, so the news pages cannot hard-code one.
-/// Read per request rather than remembered: a rebuilt frontend renames the file,
-/// and a cached list would leave the news pages linking a stylesheet that no
-/// longer exists — unstyled, and only noticeable by looking at them.
-pub fn stylesheets(static_dir: &Path) -> Vec<String> {
-    let dir = static_dir.join("_app/immutable/assets");
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return Vec::new();
-    };
-    let mut found: Vec<String> = entries
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "css"))
-        .filter_map(|entry| entry.file_name().into_string().ok())
-        .map(|name| format!("/_app/immutable/assets/{name}"))
-        .collect();
-    found.sort();
-    found
-}
-
 /// Assemble the full router: API routes first, then the static frontend with
 /// an SPA fallback so client-side routes survive a hard refresh.
 pub fn app(state: Arc<AppState>) -> Router {
@@ -219,17 +197,13 @@ pub fn app(state: Arc<AppState>) -> Router {
         // The bare path must not fall through to the app shell: a stranger
         // poking at it should get "no such thing", not a web page.
         .route("/db-export", axum::routing::get(export::no_token))
-        // Server-rendered pages, so a post written this morning is crawlable
-        // this morning (the SvelteKit build is static).
-        .route("/news", axum::routing::get(routes::pages::feed))
-        // The next batch of entries, as HTML: the feed's endless scroll.
-        .route("/news/cards", axum::routing::get(routes::pages::cards))
-        .route("/news/{*rest}", axum::routing::get(routes::pages::post))
+        .route("/db-export/", axum::routing::get(export::no_token))
+        // Generated here so the page list travels with the release that knows
+        // it. The edge sends this path to the API rather than to the site.
         .route(
             "/sitemap.xml",
             axum::routing::get(routes::pages::sitemap_xml),
         )
-        .route("/db-export/", axum::routing::get(export::no_token))
         .fallback_service(assets)
         .layer(from_fn_with_state(Arc::clone(&state), html_suffix))
         // A 503 from a degraded route is an expected outcome, not a fault; the

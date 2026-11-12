@@ -106,6 +106,9 @@ pub struct PostView {
     pub thumbs_up: i64,
     pub reacted: bool,
     pub status: &'static str,
+    /// Whether the reader may edit this entry — only its author, while pending.
+    /// Decided here so the page never has to compare user ids.
+    pub can_edit: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub moderation_note: Option<String>,
 }
@@ -113,6 +116,14 @@ pub struct PostView {
 impl PostView {
     fn public(post: &store::Post, reacted: bool) -> Self {
         Self::from_post(post, reacted, false)
+    }
+
+    /// The author's own pending entry: editable, and carrying the note that says
+    /// what to fix.
+    fn own(post: &store::Post, reacted: bool) -> Self {
+        let mut view = Self::from_post(post, reacted, true);
+        view.can_edit = true;
+        view
     }
 
     /// The author's and moderator's view: source Markdown, and the note the last
@@ -144,6 +155,7 @@ impl PostView {
             thumbs_up: post.thumbs_up,
             reacted,
             status: post.status.as_str(),
+            can_edit: false,
             moderation_note: post.moderation_note.clone(),
         }
     }
@@ -226,14 +238,52 @@ pub async fn feed(
 
     let posts = store::feed(site, limit, offset).await.map_err(internal)?;
     let reacted = reacted_set(site, &viewer, &posts).await?;
+    let total = store::count_approved(site).await.map_err(internal)?;
 
+    // Only the first page carries the queue and the reader's own pending work:
+    // a later page of the endless scroll is entries and nothing else.
+    let pending = if offset == 0 {
+        if viewer.roles.moderator {
+            store::pending(site).await.map_err(internal)?
+        } else if let Some(session) = viewer.session.as_ref() {
+            store::pending_by_author(site, session.user_id)
+                .await
+                .map_err(internal)?
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    let is_author = |post: &store::Post| {
+        viewer
+            .session
+            .as_ref()
+            .is_some_and(|session| session.user_id == post.author_id)
+    };
     let items: Vec<PostView> = posts
         .iter()
         .map(|post| PostView::public(post, reacted.contains(&post.id)))
         .collect();
+    let pending_items: Vec<PostView> = pending
+        .iter()
+        .map(|post| {
+            let reacted = reacted.contains(&post.id);
+            if is_author(post) {
+                PostView::own(post, reacted)
+            } else {
+                PostView::detailed(post, reacted, viewer.roles.moderator)
+            }
+        })
+        .collect();
 
     Ok(Json(serde_json::json!({
         "posts": items,
+        "pending": pending_items,
+        "total": total,
+        "offset": offset,
+        "moderator": viewer.roles.moderator,
         "posting": rules_for(&state, &viewer),
     }))
     .into_response())

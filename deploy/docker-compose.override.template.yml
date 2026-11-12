@@ -8,7 +8,7 @@
 # be secret to keep the site safe. Discord OAuth credentials and similar join
 # this file (as ${VARS} rendered from GitHub secrets) when accounts land.
 services:
-  web:
+  api:
     # The game server shares this machine; keep the website off its cores.
     cpuset: "0"
     # Player settings: the control server listens on the host's loopback, so the
@@ -44,6 +44,13 @@ services:
   # resolve against the release directory, so the snapshotter tries to open
   # `<release>/server.db`, fails, and publishes nothing. Every statistics query
   # and /db-export then reads a file that does not exist.
+  web:
+    cpuset: "0"
+    environment:
+      # The public origin, so SvelteKit's form-action checks match what the
+      # browser actually used.
+      ORIGIN: "https://commonwealth.ydns.eu"
+
   snapshotter:
     cpuset: "0"
     user: "${WEB_UID}:${WEB_GID}"

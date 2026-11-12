@@ -76,3 +76,14 @@ export function relativeLabel(unixSecs: number): string {
 	return `${Math.round(days / 30)}mo ago`;
 }
 
+
+/** "24 November 2025" — a news entry's date, UTC and not relative: a feed is a
+ * record of when something was posted, not of how long ago that feels. */
+export function newsDate(unixSecs: number): string {
+	return new Date(unixSecs * 1000).toLocaleDateString('en-GB', {
+		day: 'numeric',
+		month: 'long',
+		year: 'numeric',
+		timeZone: 'UTC'
+	});
+}

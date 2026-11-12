@@ -20,10 +20,31 @@
 	# Container log size is capped in docker-compose.yml.
 	log
 
-	reverse_proxy {$UPSTREAM:web:8080} {
-		# Server-sent events: pass each event straight through. Caddy buffers by
-		# default, which would hold the live feed until the buffer fills.
-		flush_interval -1
+	# The site itself: SvelteKit's Node server, which renders every page on the
+	# server and navigates client-side from there.
+	#
+	# The API, the downloads and the redacted database are the Rust process. One
+	# hostname, two upstreams, split by path — so the browser sees one origin and
+	# the session cookie stays first-party.
+	handle /api/* {
+		reverse_proxy {$API_UPSTREAM:api:8080} {
+			# Server-sent events: pass each event straight through. Caddy buffers
+			# by default, which would hold the live feed until the buffer fills.
+			flush_interval -1
+		}
+	}
+	handle /files/* {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /db-export* {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+	handle /sitemap.xml {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
+
+	handle {
+		reverse_proxy {$UPSTREAM:web:3000}
 	}
 
 	header {

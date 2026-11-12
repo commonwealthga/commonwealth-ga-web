@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Run the website against the local game database, with the player-settings
-# endpoint wired up so /settings can actually write.
+# Run the API against the local game database, with the player-settings endpoint
+# wired up so /settings can actually write.
+#
+# The site itself is a SvelteKit server now: run `npm run dev` in web/ alongside
+# this, and Vite proxies /api here. This script only starts the Rust process.
 #
 # The settings token is the control server's own admin_token. It is read out of
 # the control server's config at start time and never written anywhere: this
@@ -147,7 +150,8 @@ export WEB_CONTROL_API_URL="${WEB_CONTROL_API_URL:-http://127.0.0.1:19020}"
 echo "live db : $WEB_DB_LIVE"
 echo "site db : $WEB_DB_SITE"
 echo "settings: $WEB_CONTROL_API_URL $([[ -n "${WEB_CONTROL_API_TOKEN:-}" ]] && echo '(token set)' || echo '(no token — read-only)')"
-echo "serving : http://$BIND:$PORT"
+echo "api     : http://$BIND:$PORT"
+echo "site    : cd web && npm run dev   (proxies /api to the line above)"
 if [[ -n "${WEB_DB_SNAPSHOT:-}" ]]; then
   echo "stats   : from $WEB_DB_SNAPSHOT"
 fi

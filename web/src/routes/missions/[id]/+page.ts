@@ -5,5 +5,4 @@
  * the queue (PvP or PvE), and that is only knowable from the database at
  * request time. Prerendering it would mean guessing.
  */
-export const prerender = false;
 export const ssr = false;

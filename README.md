@@ -158,9 +158,8 @@ read-only, hence the writable default.
 | `/api/me/settings` | Your toggles (`GET`) and changes to them (`POST`), relayed to the control server |
 | `/api/me/settings/dlc` | Mark a DLC map pack installed/uninstalled (`POST`) |
 | `/db-export/<token>` | Redacted database download for third parties (the cards registry). Disabled unless `WEB_DB_EXPORT_TOKEN` is set |
-| `/news` | **Server-rendered HTML**, not JSON: the whole feed, every entry in full, with canonical link and Open Graph tags. Crawlable because it cannot be prerendered |
+| `/news` | A SvelteKit route, server-rendered: the whole feed, every entry in full, canonical link and Open Graph tags. Client-side navigated like every other page |
 | `/news/{id}-{slug}` | `301` to `/news#post-{id}`. Kept so an existing link keeps working; there is no per-post page |
-| `/news/cards?offset=&limit=` | The next batch of entries as an HTML fragment, with `X-News-More: true\|false` |
 | `/sitemap.xml` | Generated: the static pages plus every published post. Served as `application/xml` |
 | `/api/news?limit=&offset=` | Published posts, plus whether *you* may submit |
 | `/api/news/posting-rules` | Per-kind form hints, limits, and *your* remaining allowance |
@@ -302,25 +301,17 @@ dropped, links are limited to `http(s)`/`mailto`/site-relative and marked
 approves is exactly what is served, and a preview cannot disagree with the
 published page.
 
-**Why the pages are rendered in Rust** rather than SvelteKit: the frontend is
-`adapter-static`, which cannot serve a post written after the build, and an app
-shell is invisible to a crawler. The cost is that the site chrome is duplicated
-in `news::pages`, which a test guards by reading `Nav.svelte` and failing if the
-links diverge.
+**The whole site is server-rendered** (`adapter-node`), and the news feed is an
+ordinary SvelteKit route: `+page.server.ts` fetches the first page from the API
+with the visitor's cookie, so the HTML that leaves the server contains every
+entry in full — a crawler reads the news. The browser that receives it navigates
+client-side from then on, so crossing into or out of `/news` is not a page load.
 
-**And the cost you can feel:** `/news` is not a SvelteKit route, so entering or
-leaving it is a real document load rather than a client-side navigation — a white
-flash where every other page glides. Two mitigations are in place, neither of
-which pretends the seam is gone:
-
-- `@view-transition { navigation: auto; }` in `app.css`, which both documents
-  link, makes supporting browsers cross-fade the load instead of flashing.
-- The nav's news link carries `data-sveltekit-reload`, so the router does not
-  waste a request discovering that the app cannot render it.
-
-Removing the seam entirely means server-rendering the whole site (`adapter-node`
-instead of `adapter-static`), which is a different deployment shape: a Node
-process instead of static files, for every page, not just this one.
+This replaced an earlier split where the Rust server rendered the news pages and
+everything else was a prerendered static build: crawlable news, but two rendering
+models, two copies of the chrome, and a full reload at the seam. The `api` service
+now serves only JSON, files and the database export; the `web` service serves the
+pages.
 
 ## Invariants
 
@@ -341,9 +332,19 @@ process instead of static files, for every page, not just this one.
 ## Running locally
 
 ```bash
-./scripts/dev.sh            # http://127.0.0.1:8080
-./scripts/dev.sh --stop     # stop it again
-./scripts/dev.sh --restart  # stop, then start (picks up Rust changes)
+./scripts/dev.sh            # the API on http://127.0.0.1:8080
+cd web && npm run dev       # the site on http://127.0.0.1:5173, proxying /api
+./scripts/dev.sh --stop     # stop the API again
+./scripts/dev.sh --restart  # stop it, then start (picks up Rust changes)
+```
+
+The site is a Node process in production too, so `npm run dev` is the real
+development loop: Svelte changes reload instantly, and the proxied `/api` keeps
+the session cookie first-party. To run the built site the way the edge does:
+
+```bash
+cd web && npm run build
+PORT=3000 ORIGIN=http://127.0.0.1:3000 API_ORIGIN=http://127.0.0.1:8080 node build
 ```
 
 Stopping is one command because the alternative is not obvious: the server holds
