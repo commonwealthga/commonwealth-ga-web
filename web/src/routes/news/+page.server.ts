@@ -1,4 +1,4 @@
-import { env } from '$env/dynamic/private';
+import { apiBase } from '$lib/news/server';
 import type { FeedResponse } from '$lib/news/types';
 
 /**
@@ -21,7 +21,6 @@ export const load = async ({
 	request: Request;
 	url: URL;
 }) => {
-	const base = (env.API_ORIGIN ?? 'http://127.0.0.1:8080').replace(/\/$/, '');
 	const cookie = request.headers.get('cookie') ?? '';
 
 	// The kind filter is part of the URL, so a filtered feed is a link someone
@@ -30,7 +29,7 @@ export const load = async ({
 	const kind = url.searchParams.get('kind');
 	if (kind) query.set('kind', kind);
 
-	const response = await fetch(`${base}/api/news?${query}`, {
+	const response = await fetch(`${apiBase()}/api/news?${query}`, {
 		headers: cookie ? { cookie } : {}
 	});
 

@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { browser } from '$app/environment';
+	import { untrack } from 'svelte';
+	import type { PageData } from './$types';
 	import Panel from '$lib/components/Panel.svelte';
 	import MarkdownEditor from '$lib/components/MarkdownEditor.svelte';
 	import Seo from '$lib/components/Seo.svelte';
@@ -45,20 +46,27 @@
 		};
 	}
 
-	let rules = $state<Rules | null>(null);
-	let kind = $state('news');
-	let title = $state('');
-	let body = $state('');
-	let videoLinks = $state('');
+	let { data }: { data: PageData } = $props();
+
+	// The rules arrive with the page, so the form is in the HTML rather than
+	// appearing once JavaScript has asked for them.
+	const rules = $derived(data.rules);
+
+	// What the form starts with, read once: from here the fields are the author's.
+	const seed = untrack(() => data.post);
+
+	let kind = $state(seed?.kind ?? 'news');
+	let title = $state(seed?.title ?? '');
+	let body = $state(seed?.body_markdown ?? '');
+	let videoLinks = $state(
+		(seed?.videos ?? []).map((id: string) => 'https://youtu.be/' + id).join('\n')
+	);
 	let message = $state('');
 	let problem = $state('');
-	let phase = $state<'loading' | 'ready' | 'sending' | 'sent' | 'error'>('loading');
+	let phase = $state<'ready' | 'sending' | 'sent'>('ready');
 
-	// Editing an entry that is still waiting for review: same form, different
-	// verb. `/news/submit?edit=12`. Read in the browser: this page is
-	// prerendered, so there are no search params at build time.
-	let editId = $state(0);
-	let editBlocked = $state('');
+	const editId = $derived(data.editId);
+	const editBlocked = $derived(data.blocked);
 
 	const selected = $derived(rules?.kinds.find((option) => option.value === kind) ?? null);
 	const isVideo = $derived(selected?.requires_link ?? false);
@@ -86,60 +94,6 @@
 	};
 
 	const unusableLinks = $derived(links.filter((link) => youtubeId(link) === null));
-
-	$effect(() => {
-		if (browser) {
-			const value = new URLSearchParams(window.location.search).get('edit');
-			const id = value ? Number(value) : 0;
-			editId = Number.isInteger(id) && id > 0 ? id : 0;
-		}
-	});
-
-	$effect(() => {
-		let cancelled = false;
-		fetch('/api/news/posting-rules', { credentials: 'same-origin' })
-			.then((response) => (response.ok ? response.json() : Promise.reject(response.status)))
-			.then(async (data: Rules) => {
-				if (cancelled) return;
-				rules = data;
-
-				if (editId) {
-					const response = await fetch('/api/news/' + editId, {
-						credentials: 'same-origin'
-					});
-					if (!response.ok) {
-						if (!cancelled) {
-							problem = 'That entry cannot be edited.';
-							phase = 'error';
-						}
-						return;
-					}
-					const post = await response.json();
-					if (cancelled) return;
-					if (post.status !== 'pending') {
-						// Published entries are edited by asking a moderator to
-						// unpublish them, not by quietly changing the page.
-						editBlocked =
-							'This entry has already been reviewed, so it cannot be changed here. Ask a moderator to unpublish it and it will come back to this form.';
-					}
-					kind = post.kind;
-					title = post.title ?? '';
-					body = post.body_markdown ?? '';
-					videoLinks = (post.videos ?? [])
-						.map((id: string) => 'https://youtu.be/' + id)
-						.join('\n');
-				}
-				phase = 'ready';
-			})
-			.catch(() => {
-				if (cancelled) return;
-				problem = 'Could not load the posting rules. Try reloading the page.';
-				phase = 'error';
-			});
-		return () => {
-			cancelled = true;
-		};
-	});
 
 	async function submit(event: SubmitEvent) {
 		event.preventDefault();
@@ -204,9 +158,7 @@
 		</p>
 	</header>
 
-	{#if phase === 'loading'}
-		<p class="label text-faint">Loading…</p>
-	{:else if rules && !rules.may_post}
+	{#if !rules.may_post}
 		<Panel label="Posting is closed to you">
 			<p class="text-sm leading-relaxed text-dim">{rules.reason}</p>
 			{#if !rules.signed_in}
