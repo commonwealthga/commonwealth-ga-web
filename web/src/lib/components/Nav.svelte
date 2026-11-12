@@ -54,8 +54,11 @@
 				{#each links as link (link.href)}
 					{@const on = active(link.href)}
 					<li class="shrink-0">
+						<!-- `/news` is served by the Rust server, not by this app, so ask
+						     for a real navigation rather than letting the router try and fail. -->
 						<a
 							href={link.href}
+							data-sveltekit-reload={link.href === '/news' || undefined}
 							aria-current={on ? 'page' : undefined}
 							class="relative flex items-baseline px-3 py-3 transition-colors sm:px-4"
 						>

@@ -308,6 +308,20 @@ shell is invisible to a crawler. The cost is that the site chrome is duplicated
 in `news::pages`, which a test guards by reading `Nav.svelte` and failing if the
 links diverge.
 
+**And the cost you can feel:** `/news` is not a SvelteKit route, so entering or
+leaving it is a real document load rather than a client-side navigation — a white
+flash where every other page glides. Two mitigations are in place, neither of
+which pretends the seam is gone:
+
+- `@view-transition { navigation: auto; }` in `app.css`, which both documents
+  link, makes supporting browsers cross-fade the load instead of flashing.
+- The nav's news link carries `data-sveltekit-reload`, so the router does not
+  waste a request discovering that the app cannot render it.
+
+Removing the seam entirely means server-rendering the whole site (`adapter-node`
+instead of `adapter-static`), which is a different deployment shape: a Node
+process instead of static files, for every page, not just this one.
+
 ## Invariants
 
 - **`/api/status` is a public contract.** Don't change its path, content type or

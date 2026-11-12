@@ -236,6 +236,41 @@ button:disabled {
 	color: transparent;
 }
 
+/* ---------------------------------------------------------------------------
+   Cross-document transitions
+
+   The news feed is served by the Rust server (it has to be: the content is
+   written after the build, and a static shell would be invisible to a crawler),
+   so moving between it and the rest of the site is a real document load, not a
+   client-side navigation. That is the seam you feel as a white flash.
+
+   Chrome (126+) will cross-fade same-origin document loads if both documents opt
+   in, which takes the edge off without pretending the architecture is something
+   it is not. Browsers without support simply load the page as before.
+   --------------------------------------------------------------------------- */
+
+@view-transition {
+	navigation: auto;
+}
+
+::view-transition-old(root) {
+	animation: page-out 160ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+::view-transition-new(root) {
+	animation: page-in 220ms cubic-bezier(0, 0, 0.2, 1) both;
+}
+
+@keyframes page-out {
+	to {
+		opacity: 0;
+	}
+}
+@keyframes page-in {
+	from {
+		opacity: 0;
+	}
+}
+
 @media (prefers-reduced-motion: reduce) {
 	*,
 	*::before,

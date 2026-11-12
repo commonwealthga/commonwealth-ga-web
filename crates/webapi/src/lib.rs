@@ -78,9 +78,7 @@ pub struct AppState {
     /// the process open: a stream that never finishes is why the server ignored
     /// Ctrl-C.
     pub shutdown: broadcast::Sender<()>,
-    /// Stylesheets from the frontend build, for the server-rendered news pages.
-    /// Resolved once at startup: a new build arrives with a new container.
-    pub stylesheets: Vec<String>,
+
 }
 
 impl AppState {
@@ -140,7 +138,6 @@ impl AppState {
     ) -> Arc<Self> {
         let (events, _) = broadcast::channel(EVENT_BUFFER);
         let (shutdown, _) = broadcast::channel(1);
-        let stylesheets = find_stylesheets(&cfg.static_dir);
         let control_addr = cfg.control_addr();
         let status = StatusService::new(
             live_pool.clone(),
@@ -166,16 +163,17 @@ impl AppState {
             site_pool,
             events,
             shutdown,
-            stylesheets,
         })
     }
 }
 
 /// Every CSS file the frontend build emitted, as URL paths.
 ///
-/// SvelteKit content-hashes asset names, so the news pages cannot hard-code one;
-/// a long cache is safe precisely because the name changes with the content.
-fn find_stylesheets(static_dir: &Path) -> Vec<String> {
+/// SvelteKit content-hashes asset names, so the news pages cannot hard-code one.
+/// Read per request rather than remembered: a rebuilt frontend renames the file,
+/// and a cached list would leave the news pages linking a stylesheet that no
+/// longer exists — unstyled, and only noticeable by looking at them.
+pub fn stylesheets(static_dir: &Path) -> Vec<String> {
     let dir = static_dir.join("_app/immutable/assets");
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return Vec::new();

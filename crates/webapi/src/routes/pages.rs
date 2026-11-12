@@ -95,7 +95,12 @@ pub async fn feed(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Api
         offset: 0,
         total,
     };
-    let html = pages::feed(&data, &chrome, &state.stylesheets, &state.cfg.site_url);
+    let html = pages::feed(
+        &data,
+        &chrome,
+        &crate::stylesheets(&state.cfg.static_dir),
+        &state.cfg.site_url,
+    );
     Ok(html_response(html))
 }
 
