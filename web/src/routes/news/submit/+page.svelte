@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { browser } from '$app/environment';
 	import Panel from '$lib/components/Panel.svelte';
 	import Seo from '$lib/components/Seo.svelte';
 
@@ -56,6 +57,12 @@
 	let phase = $state<'loading' | 'ready' | 'sending' | 'sent' | 'error'>('loading');
 	let bodyEl = $state<HTMLTextAreaElement | null>(null);
 
+	// Editing an entry that is still waiting for review: same form, different
+	// verb. `/news/submit?edit=12`. Read in the browser: this page is
+	// prerendered, so there are no search params at build time.
+	let editId = $state(0);
+	let editBlocked = $state('');
+
 	const selected = $derived(rules?.kinds.find((option) => option.value === kind) ?? null);
 	const isVideo = $derived(selected?.requires_link ?? false);
 	const hasEditor = $derived(selected?.has_editor ?? true);
@@ -84,12 +91,48 @@
 	const unusableLinks = $derived(links.filter((link) => youtubeId(link) === null));
 
 	$effect(() => {
+		if (browser) {
+			const value = new URLSearchParams(window.location.search).get('edit');
+			const id = value ? Number(value) : 0;
+			editId = Number.isInteger(id) && id > 0 ? id : 0;
+		}
+	});
+
+	$effect(() => {
 		let cancelled = false;
 		fetch('/api/news/posting-rules', { credentials: 'same-origin' })
 			.then((response) => (response.ok ? response.json() : Promise.reject(response.status)))
-			.then((data: Rules) => {
+			.then(async (data: Rules) => {
 				if (cancelled) return;
 				rules = data;
+
+				if (editId) {
+					const response = await fetch('/api/news/' + editId, {
+						credentials: 'same-origin'
+					});
+					if (!response.ok) {
+						if (!cancelled) {
+							problem = 'That entry cannot be edited.';
+							phase = 'error';
+						}
+						return;
+					}
+					const post = await response.json();
+					if (cancelled) return;
+					if (post.status !== 'pending') {
+						// Published entries are edited by asking a moderator to
+						// unpublish them, not by quietly changing the page.
+						editBlocked =
+							'This entry has already been reviewed, so it cannot be changed here. Ask a moderator to unpublish it and it will come back to this form.';
+					}
+					kind = post.kind;
+					title = post.title ?? '';
+					summary = post.summary ?? '';
+					body = post.body_markdown ?? '';
+					videoLinks = (post.videos ?? [])
+						.map((id: string) => 'https://youtu.be/' + id)
+						.join('\n');
+				}
 				phase = 'ready';
 			})
 			.catch(() => {
@@ -180,8 +223,8 @@
 		message = '';
 
 		try {
-			const response = await fetch('/api/news', {
-				method: 'POST',
+			const response = await fetch(editId ? '/api/news/' + editId : '/api/news', {
+				method: editId ? 'PATCH' : 'POST',
 				credentials: 'same-origin',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
@@ -199,8 +242,10 @@
 				phase = 'ready';
 				return;
 			}
-			message =
-				payload?.message ?? 'Thanks — a moderator will review it before it appears on the site.';
+			message = editId
+				? 'Saved. The entry is back in the queue with your changes.'
+				: (payload?.message ??
+					'Thanks — a moderator will review it before it appears on the site.');
 			phase = 'sent';
 			title = '';
 			summary = '';
@@ -222,10 +267,17 @@
 <div class="mx-auto flex w-full max-w-3xl flex-col gap-6">
 	<header class="flex flex-col gap-2">
 		<a class="label text-faint transition-colors hover:text-ember" href="/news">← News</a>
-		<h1 class="heading text-4xl text-ink sm:text-5xl">Post news</h1>
+		<h1 class="heading text-4xl text-ink sm:text-5xl">
+			{editId ? 'Edit entry' : 'Post news'}
+		</h1>
 		<p class="text-sm leading-relaxed text-dim">
-			Anyone with a game account can post. A moderator reviews every entry before it appears in the
-			feed.
+			{#if editId}
+				Changes go back into the review queue — an edited entry is not published until a moderator
+				approves it again.
+			{:else}
+				Anyone with a game account can post. A moderator reviews every entry before it appears in
+				the feed.
+			{/if}
 		</p>
 	</header>
 
@@ -241,7 +293,12 @@
 				>
 			{/if}
 		</Panel>
-	{:else if rules && rules.may_post && rules.allowance && rules.allowance.remaining === 0}
+	{:else if editBlocked}
+		<Panel label="Cannot be edited here">
+			<p class="text-sm leading-relaxed text-dim">{editBlocked}</p>
+			<a class="label mt-4 inline-block text-ember hover:text-amber" href="/news">Back to the feed</a>
+		</Panel>
+	{:else if rules && rules.may_post && rules.allowance && rules.allowance.remaining === 0 && !editId}
 		<Panel label="No posts left today">
 			<p class="text-sm leading-relaxed text-dim">
 				You have used all {rules.allowance.limit} of today's posts.
@@ -259,14 +316,16 @@
 				<p class="text-sm leading-relaxed text-dim">{message}</p>
 				<div class="mt-4 flex gap-3">
 					<a class="label text-ember hover:text-amber" href="/news">Back to the feed</a>
-					<button
-						type="button"
-						class="label text-dim hover:text-ink"
-						onclick={() => {
-							phase = 'ready';
-							message = '';
-						}}>Post another</button
-					>
+					{#if !editId}
+						<button
+							type="button"
+							class="label text-dim hover:text-ink"
+							onclick={() => {
+								phase = 'ready';
+								message = '';
+							}}>Post another</button
+						>
+					{/if}
 				</div>
 			</Panel>
 		{:else}
@@ -414,9 +473,15 @@
 						disabled={phase === 'sending' || (isVideo && (links.length === 0 || unusableLinks.length > 0))}
 						class="heading border border-ember/60 px-5 py-2.5 text-sm tracking-[0.1em] text-ember transition-colors hover:bg-ember hover:text-void disabled:opacity-50"
 					>
-						{phase === 'sending' ? 'Sending…' : 'Submit for review'}
+						{phase === 'sending'
+							? 'Sending…'
+							: editId
+								? 'Save changes'
+								: 'Submit for review'}
 					</button>
-					{#if rules.allowance}
+					{#if editId}
+						<span class="label text-faint">Editing an entry in the queue</span>
+					{:else if rules.allowance}
 						<span class="label text-faint">
 							{rules.allowance.remaining} of {rules.allowance.limit} left today
 						</span>

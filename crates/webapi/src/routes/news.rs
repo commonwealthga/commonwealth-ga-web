@@ -115,11 +115,12 @@ impl PostView {
         Self::from_post(post, reacted, false)
     }
 
-    /// The author's and moderator's view: source Markdown and, for a moderator,
-    /// the note the last decision carried.
-    fn detailed(post: &store::Post, reacted: bool, moderator: bool) -> Self {
+    /// The author's and moderator's view: source Markdown, and the note the last
+    /// decision carried. The author sees the note too — when a post is
+    /// unpublished for a fix, that note is the only thing saying what to fix.
+    fn detailed(post: &store::Post, reacted: bool, with_note: bool) -> Self {
         let mut view = Self::from_post(post, reacted, true);
-        if !moderator {
+        if !with_note {
             view.moderation_note = None;
         }
         view
@@ -299,7 +300,7 @@ pub async fn detail(
     let view = if post.status == Status::Approved && !viewer.roles.moderator && !is_author {
         PostView::public(&post, reacted)
     } else {
-        PostView::detailed(&post, reacted, viewer.roles.moderator)
+        PostView::detailed(&post, reacted, viewer.roles.moderator || is_author)
     };
     Ok(Json(view).into_response())
 }
@@ -387,9 +388,11 @@ pub async fn mine(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Api
     let posts = store::by_author(site, session.user_id, FEED_MAX)
         .await
         .map_err(internal)?;
+    // Their own posts, so their own notes: this is where a "please fix this"
+    // lands.
     let items: Vec<PostView> = posts
         .iter()
-        .map(|post| PostView::detailed(post, false, false))
+        .map(|post| PostView::detailed(post, false, true))
         .collect();
     Ok(Json(serde_json::json!({ "posts": items })).into_response())
 }
@@ -481,6 +484,119 @@ pub async fn reject(
         "news post rejected"
     );
     Ok(Json(serde_json::json!({ "id": id, "status": Status::Rejected.as_str() })).into_response())
+}
+
+/// `PATCH /api/news/{id}` — fix your own entry while it is still pending.
+///
+/// Not for approved posts: publishing edited text without review would make the
+/// queue advisory. A moderator's way to allow a fix is to unapprove, which puts
+/// the entry back here.
+pub async fn update(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Json(body): Json<SubmitBody>,
+) -> ApiResult<Response> {
+    let site = site_pool(&state)?;
+    let viewer = viewer(&state, &headers).await?;
+    let session = viewer.require_session()?;
+
+    let post = store::by_id(site, id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| AppError::NotFound("post".to_string()))?;
+    if post.author_id != session.user_id {
+        return Err(AppError::Forbidden(
+            "only the author can edit this post".to_string(),
+        ));
+    }
+    if post.status != Status::Pending {
+        return Err(AppError::Forbidden(
+            "this post has been reviewed and can no longer be edited".to_string(),
+        ));
+    }
+
+    let mut links = body.links;
+    if let Some(single) = body.link {
+        links.push(single);
+    }
+    let entry = news::validate(&body.kind, &body.title, &body.summary, &body.body, &links)
+        .map_err(|error| AppError::BadRequest(error.message().to_string()))?;
+
+    let changed = store::update_pending(site, id, session.user_id, &entry, now_unix())
+        .await
+        .map_err(internal)?;
+    if !changed {
+        return Err(AppError::NotFound(
+            "own pending post (it may have just been reviewed)".to_string(),
+        ));
+    }
+    store::audit(
+        site,
+        Some(id),
+        Some(session.user_id),
+        &session.username,
+        "edit",
+        "",
+        now_unix(),
+    )
+    .await
+    .map_err(internal)?;
+
+    tracing::info!(post_id = id, author = %session.username, "news post edited while pending");
+    Ok(Json(serde_json::json!({
+        "id": id,
+        "status": Status::Pending.as_str(),
+        "path": format!("/news/{id}-{}", entry.slug),
+    }))
+    .into_response())
+}
+
+/// `POST /api/news/{id}/unapprove` — take a published post back for a fix.
+///
+/// The note is required because it is the only thing telling the author what to
+/// change; without it the entry simply vanishes from the feed with no reason.
+pub async fn unapprove(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Json(body): Json<NoteBody>,
+) -> ApiResult<Response> {
+    let site = site_pool(&state)?;
+    let viewer = viewer(&state, &headers).await?;
+    let moderator = viewer.moderator()?;
+
+    let note = store::validate_note(&body.note)
+        .map_err(|message| AppError::BadRequest(message.to_string()))?;
+    let now = now_unix();
+
+    let changed = store::unapprove(site, id, moderator.user_id, &moderator.username, &note, now)
+        .await
+        .map_err(internal)?;
+    if !changed {
+        return Err(AppError::NotFound(
+            "published post (it may already be unpublished)".to_string(),
+        ));
+    }
+    store::audit(
+        site,
+        Some(id),
+        Some(moderator.user_id),
+        &moderator.username,
+        "unapprove",
+        &note,
+        now,
+    )
+    .await
+    .map_err(internal)?;
+
+    tracing::info!(
+        post_id = id,
+        moderator = %moderator.username,
+        note = %note,
+        "news post unapproved for a fix"
+    );
+    Ok(Json(serde_json::json!({ "id": id, "status": Status::Pending.as_str() })).into_response())
 }
 
 /// `POST /api/news/{id}/thumb` — one thumbs-up per account, toggled.

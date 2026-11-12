@@ -610,6 +610,250 @@ async fn too_many_videos_is_refused() {
 }
 
 #[tokio::test]
+async fn an_author_can_edit_their_own_entry_while_it_waits() {
+    let harness = Harness::new().await;
+    let app = harness.router(None, PostingMode::Open);
+    let author = harness.session(7, "Agent07").await;
+
+    let (_, body) = send(&app, submit_request(Some(&author), post_payload())).await;
+    let id = json(&body)["id"].as_i64().expect("id");
+
+    let edited = serde_json::json!({
+        "kind": "article",
+        "title": "Surfside bunker, solo — corrected",
+        "summary": "Fixed the route after the lift change.",
+        "body": "## Prep\n\nBring **three** medkits now."
+    });
+    let request = Request::builder()
+        .method("PATCH")
+        .uri(format!("/api/news/{id}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::COOKIE, format!("cw_session={author}"))
+        .body(Body::from(edited.to_string()))
+        .expect("request");
+    let (status, body) = send(&app, request).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let post = store::by_id(&harness.site, id)
+        .await
+        .expect("lookup")
+        .expect("present");
+    assert_eq!(post.title, "Surfside bunker, solo — corrected");
+    assert_eq!(
+        post.status,
+        webapi::news::Status::Pending,
+        "still unpublished"
+    );
+    assert!(
+        post.body_html.contains("<strong>three</strong>"),
+        "re-rendered"
+    );
+
+    // The edit is on the record, attributed to the author.
+    let trail = store::audit_for(&harness.site, id).await.expect("audit");
+    assert_eq!(
+        trail.last().map(|entry| entry.action.as_str()),
+        Some("edit")
+    );
+
+    // And it is still not public.
+    let (status, _) = send(&app, get(None, &format!("/api/news/{id}"))).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_published_entry_cannot_be_edited_by_its_author() {
+    let harness = Harness::new().await;
+    let live = harness
+        .live_with_roles(&[(1, access::ROLE_MODERATOR)])
+        .await;
+    let app = harness.router(Some(live), PostingMode::Open);
+    let author = harness.session(7, "Agent07").await;
+    let moderator = harness.session(1, "ModOne").await;
+
+    let (_, body) = send(&app, submit_request(Some(&author), post_payload())).await;
+    let id = json(&body)["id"].as_i64().expect("id");
+    send(
+        &app,
+        action_request(
+            &moderator,
+            &format!("/api/news/{id}/approve"),
+            serde_json::json!({}),
+        ),
+    )
+    .await;
+
+    let request = Request::builder()
+        .method("PATCH")
+        .uri(format!("/api/news/{id}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::COOKIE, format!("cw_session={author}"))
+        .body(Body::from(post_payload().to_string()))
+        .expect("request");
+    let (status, body) = send(&app, request).await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "publishing edited text without review would make the queue advisory: {body}"
+    );
+}
+
+#[tokio::test]
+async fn nobody_edits_somebody_elses_entry() {
+    let harness = Harness::new().await;
+    let app = harness.router(None, PostingMode::Open);
+    let author = harness.session(7, "Agent07").await;
+    let stranger = harness.session(8, "Agent08").await;
+
+    let (_, body) = send(&app, submit_request(Some(&author), post_payload())).await;
+    let id = json(&body)["id"].as_i64().expect("id");
+
+    let request = Request::builder()
+        .method("PATCH")
+        .uri(format!("/api/news/{id}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::COOKIE, format!("cw_session={stranger}"))
+        .body(Body::from(post_payload().to_string()))
+        .expect("request");
+    let (status, _) = send(&app, request).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn a_moderator_can_unpublish_a_post_so_its_author_can_fix_it() {
+    let harness = Harness::new().await;
+    let live = harness
+        .live_with_roles(&[(1, access::ROLE_MODERATOR)])
+        .await;
+    let app = harness.router(Some(live), PostingMode::Open);
+    let author = harness.session(7, "Agent07").await;
+    let moderator = harness.session(1, "ModOne").await;
+
+    let (_, body) = send(&app, submit_request(Some(&author), post_payload())).await;
+    let id = json(&body)["id"].as_i64().expect("id");
+    send(
+        &app,
+        action_request(
+            &moderator,
+            &format!("/api/news/{id}/approve"),
+            serde_json::json!({}),
+        ),
+    )
+    .await;
+
+    // A note is required: it is the only thing telling the author what to fix.
+    let (status, body) = send(
+        &app,
+        action_request(
+            &moderator,
+            &format!("/api/news/{id}/unapprove"),
+            serde_json::json!({ "note": "  " }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+    let (status, body) = send(
+        &app,
+        action_request(
+            &moderator,
+            &format!("/api/news/{id}/unapprove"),
+            serde_json::json!({ "note": "Typo in the first line: it says two medkits, should be three." }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // Out of the public feed, back in the author's queue, with the reason.
+    let (_, feed) = send(&app, get(None, "/api/news")).await;
+    assert_eq!(json(&feed)["posts"].as_array().expect("posts").len(), 0);
+    let (_, mine) = send(&app, get(Some(&author), "/api/news/mine")).await;
+    let mine = json(&mine);
+    assert_eq!(mine["posts"][0]["status"], "pending");
+    assert_eq!(
+        mine["posts"][0]["moderation_note"],
+        "Typo in the first line: it says two medkits, should be three."
+    );
+
+    // And the author can now edit it — which is the whole point.
+    let request = Request::builder()
+        .method("PATCH")
+        .uri(format!("/api/news/{id}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::COOKIE, format!("cw_session={author}"))
+        .body(Body::from(
+            serde_json::json!({
+                "kind": "article",
+                "title": "How to solo the Surfside bunker",
+                "body": "## Prep\n\nBring **three** medkits."
+            })
+            .to_string(),
+        ))
+        .expect("request");
+    let (status, body) = send(&app, request).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let post = store::by_id(&harness.site, id)
+        .await
+        .expect("lookup")
+        .expect("kept");
+    assert!(post.body_markdown.contains("three"));
+
+    // The trail records both decisions and the edit.
+    let trail = store::audit_for(&harness.site, id).await.expect("audit");
+    let actions: Vec<&str> = trail.iter().map(|entry| entry.action.as_str()).collect();
+    assert_eq!(actions, vec!["approve", "unapprove", "edit"]);
+}
+
+#[tokio::test]
+async fn only_a_moderator_can_unpublish() {
+    let harness = Harness::new().await;
+    let live = harness
+        .live_with_roles(&[(1, access::ROLE_MODERATOR)])
+        .await;
+    let app = harness.router(Some(live), PostingMode::Open);
+    let author = harness.session(7, "Agent07").await;
+    let moderator = harness.session(1, "ModOne").await;
+
+    let (_, body) = send(&app, submit_request(Some(&author), post_payload())).await;
+    let id = json(&body)["id"].as_i64().expect("id");
+    send(
+        &app,
+        action_request(
+            &moderator,
+            &format!("/api/news/{id}/approve"),
+            serde_json::json!({}),
+        ),
+    )
+    .await;
+
+    let (status, _) = send(
+        &app,
+        action_request(
+            &author,
+            &format!("/api/news/{id}/unapprove"),
+            serde_json::json!({ "note": "I want to change it" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // A post already in the queue is not "published", so there is nothing to undo.
+    let (_, body) = send(&app, submit_request(Some(&author), post_payload())).await;
+    let pending_id = json(&body)["id"].as_i64().expect("id");
+    let (status, _) = send(
+        &app,
+        action_request(
+            &moderator,
+            &format!("/api/news/{pending_id}/unapprove"),
+            serde_json::json!({ "note": "nope" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn thumbs_up_toggles_and_counts_per_account() {
     let harness = Harness::new().await;
     let live = harness

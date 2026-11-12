@@ -302,6 +302,8 @@ pub struct FeedData<'a> {
     /// Posts this reader has already thumbed up.
     pub reacted: &'a std::collections::HashSet<i64>,
     pub hint: PostingHint,
+    /// Who is reading, for "you may edit this" decisions.
+    pub viewer_id: Option<i64>,
     /// How many entries this page already holds, and how many are published.
     pub offset: i64,
     pub total: i64,
@@ -345,10 +347,16 @@ pub fn feed(data: &FeedData, chrome: &Chrome, stylesheets: &[String], base: &str
     } else {
         body.push_str("<ul class=\"mt-10 flex flex-col gap-3\">");
         for post in own_pending {
-            body.push_str(&card(post, false, true));
+            body.push_str(&card(post, false, true, false, data.viewer_id));
         }
         for post in posts {
-            body.push_str(&card(post, data.reacted.contains(&post.id), false));
+            body.push_str(&card(
+                post,
+                data.reacted.contains(&post.id),
+                false,
+                data.moderator,
+                data.viewer_id,
+            ));
         }
         body.push_str("</ul>");
         body.push_str(&more_control(data.offset + posts.len() as i64, data.total));
@@ -418,7 +426,7 @@ You have used all {} posts for today.{when}</div>",
 pub fn cards(posts: &[Post], reacted: &std::collections::HashSet<i64>) -> String {
     let mut out = String::new();
     for post in posts {
-        out.push_str(&card(post, reacted.contains(&post.id), false));
+        out.push_str(&card(post, reacted.contains(&post.id), false, false, None));
     }
     out
 }
@@ -441,35 +449,7 @@ fn more_control(loaded: i64, total: i64) -> String {
 fn review_queue(pending: &[Post]) -> String {
     let mut items = String::new();
     for post in pending {
-        items.push_str(&format!(
-            "<li data-pending=\"{id}\" class=\"panel-ticks border border-amber/40 bg-carbon/40\">\
-<div class=\"flex flex-col gap-3 p-5\">\
-<p class=\"label text-faint\"><span class=\"text-amber\">{author}</span> posted {phrase} · {date}</p>\
-{title}\
-<div class=\"prose-news flex flex-col gap-3 border-y border-line/50 py-3 text-sm leading-relaxed text-dim\">{html}</div>\
-{videos}\
-<label class=\"flex flex-col gap-1.5\">\
-<span class=\"label text-faint\">Note (required to reject)</span>\
-<textarea data-note rows=\"2\" placeholder=\"What is wrong with it?\" class=\"w-full border border-line/70 bg-void/60 px-3 py-2 text-sm text-ink\"></textarea>\
-</label>\
-<p data-message class=\"hidden text-sm text-ember\"></p>\
-<div class=\"flex flex-wrap items-center gap-3\">\
-<button type=\"button\" data-action=\"approve\" class=\"heading border border-ember/60 px-4 py-2 text-sm tracking-[0.1em] text-ember transition-colors hover:bg-ember hover:text-void\">Approve</button>\
-<button type=\"button\" data-action=\"reject\" class=\"heading border border-line/70 px-4 py-2 text-sm tracking-[0.1em] text-dim transition-colors hover:border-red/60 hover:text-ink\">Reject</button>\
-</div>\
-</div></li>",
-            id = post.id,
-            phrase = post.kind.phrase(),
-            date = escape(&human_date(post.created_at)),
-            author = escape(&post.author_name),
-            title = if post.title.is_empty() {
-                String::new()
-            } else {
-                format!("<h2 class=\"heading text-xl text-ink\">{}</h2>", escape(&post.title))
-            },
-            html = post.body_html,
-            videos = video_grid(&post.videos),
-        ));
+        items.push_str(&card(post, false, true, true, None));
     }
 
     format!(
@@ -478,7 +458,7 @@ fn review_queue(pending: &[Post]) -> String {
 <h2 class=\"heading text-2xl text-ink\">Waiting for review</h2>\
 <span class=\"label text-amber\">{count} pending</span>\
 </div>\
-<p class=\"mt-1 text-sm text-dim\">Only moderators see this section. Approving publishes immediately; rejecting needs a note and hides the post everywhere.</p>\
+<p class=\"mt-1 text-sm text-dim\">Only moderators see this section. Every decision asks first; rejecting and unpublishing also ask for a reason, which the author sees.</p>\
 <ul class=\"mt-4 flex flex-col gap-3\">{items}</ul>\
 </section>",
         count = pending.len(),
@@ -488,7 +468,13 @@ fn review_queue(pending: &[Post]) -> String {
 
 /// A full entry: who posted what and when, the body, the videos, a thumbs-up.
 /// There is no detail page — the feed is the page.
-fn card(post: &Post, reacted: bool, pending: bool) -> String {
+fn card(
+    post: &Post,
+    reacted: bool,
+    pending: bool,
+    moderator: bool,
+    viewer_id: Option<i64>,
+) -> String {
     let mut header = format!(
         "<p class=\"label text-faint\"><span class=\"{} \">{}</span> posted {} · <time datetime=\"{}\">{}</time></p>",
         if pending { "text-amber" } else { "text-dim" },
@@ -498,9 +484,23 @@ fn card(post: &Post, reacted: bool, pending: bool) -> String {
         escape(&human_date(post.created_at)),
     );
     if pending {
-        header.push_str(
-            "<p class=\"label mt-1 text-amber\">Waiting for review — only you and a moderator can see this.</p>",
-        );
+        // An unapproved post comes back with the moderator's note, which is the
+        // only thing that says what to fix.
+        let note = match post.moderation_note.as_deref().map(str::trim) {
+            Some(note) if !note.is_empty() => format!(
+                "<p class=\"label mt-1 text-amber\">A moderator asked for a change: {}</p>",
+                escape(note)
+            ),
+            _ => "<p class=\"label mt-1 text-amber\">Waiting for review — only you and a moderator can see this.</p>".to_string(),
+        };
+        header.push_str(&note);
+        // Only the author may edit, so only the author is offered it.
+        if viewer_id == Some(post.author_id) {
+            header.push_str(&format!(
+                "<a class=\"label mt-2 inline-block text-ember underline decoration-ember/40 underline-offset-4 hover:text-amber\" href=\"/news/submit?edit={}\">Edit this entry</a>",
+                post.id
+            ));
+        }
     }
 
     let title = if post.title.is_empty() {
@@ -533,15 +533,43 @@ fn card(post: &Post, reacted: bool, pending: bool) -> String {
     };
 
     format!(
-        "<li id=\"post-{id}\" class=\"panel-ticks border {} bg-carbon/40 p-5\">{header}{title}{summary}{body}{videos}{reactions}</li>",
+        "<li id=\"post-{id}\" class=\"panel-ticks border {} bg-carbon/40 p-5\" data-post-title=\"{escaped_title}\">{header}{title}{summary}{body}{videos}{reactions}{tools}</li>",
         if pending {
             "border-amber/40"
         } else {
             "border-line/60"
         },
         id = post.id,
+        escaped_title = escape(&post.title),
         videos = video_grid(&post.videos),
         reactions = reactions(post, reacted),
+        tools = if moderator {
+            moderator_tools(pending)
+        } else {
+            String::new()
+        },
+    )
+}
+
+/// What a moderator can do to an entry, wherever it is in its life. Every one of
+/// these asks for confirmation; the two that remove something from the feed also
+/// ask for a reason, because that reason is all the author gets.
+fn moderator_tools(pending: bool) -> String {
+    let (first, second) = if pending {
+        ("approve", "reject")
+    } else {
+        ("unapprove", "reject")
+    };
+    let first_label = if pending { "Approve" } else { "Unpublish" };
+    let second_label = if pending { "Reject" } else { "Delete" };
+
+    format!(
+        "<div class=\"mt-4 flex flex-wrap items-center gap-2 border-t border-line/60 pt-3\">\
+<span class=\"label text-faint\">Moderator</span>\
+<button type=\"button\" data-action=\"{first}\" class=\"heading border border-ember/60 px-3 py-1.5 text-xs tracking-[0.1em] text-ember transition-colors hover:bg-ember hover:text-void\">{first_label}</button>\
+<button type=\"button\" data-action=\"{second}\" class=\"heading border border-line/70 px-3 py-1.5 text-xs tracking-[0.1em] text-dim transition-colors hover:border-red/60 hover:text-ink\">{second_label}</button>\
+<span class=\"label text-faint\" data-message></span>\
+</div>"
     )
 }
 
@@ -715,6 +743,7 @@ mod tests {
             moderator,
             reacted: &reacted,
             hint: hint(),
+            viewer_id: None,
             offset: 0,
             total: 0,
         };
@@ -795,6 +824,7 @@ mod tests {
             moderator: false,
             reacted: &reacted,
             hint: hint(),
+            viewer_id: None,
             offset: 0,
             total: 0,
         };
@@ -840,7 +870,10 @@ mod tests {
         assert!(page.contains("2 pending"));
         assert!(page.contains("data-action=\"approve\""), "{page}");
         assert!(page.contains("data-action=\"reject\""));
-        assert!(page.contains("data-note"), "somewhere to write the reason");
+        assert!(
+            !page.contains("data-action=\"unapprove\""),
+            "a pending entry is approved or rejected, not unpublished"
+        );
         assert!(
             page.contains("youtube-nocookie.com/embed/dQw4w9WgXcQ"),
             "a video submitted for review can be watched before deciding"
@@ -865,7 +898,7 @@ mod tests {
             ),
             (
                 "a queue item",
-                "<li data-pending=\"12\" class=\"panel-ticks border",
+                "<li id=\"post-12\" class=\"panel-ticks border",
             ),
             (
                 "the posting box",
@@ -920,6 +953,7 @@ mod tests {
                     resets_at: Some(1_794_360_000),
                     reason: None,
                 },
+                viewer_id: Some(7),
                 offset: 0,
                 total: 1,
             };
@@ -957,6 +991,7 @@ mod tests {
             moderator: false,
             reacted: &reacted,
             hint: hint(),
+            viewer_id: None,
             offset: 10,
             total: 25,
         };
@@ -975,11 +1010,93 @@ mod tests {
             moderator: false,
             reacted: &reacted,
             hint: hint(),
+            viewer_id: None,
             offset: 0,
             total: 1,
         };
         let page = feed(&all, &Chrome::default(), &styles(), BASE);
         assert!(!page.contains("data-news-more"), "{page}");
+    }
+
+    #[test]
+    fn an_unpublished_entry_tells_the_author_what_to_fix_and_offers_the_edit() {
+        let mut post = pending_article();
+        post.moderation_note =
+            Some("Date is wrong: it says the 12th, it was the 19th.".to_string());
+        let reacted = HashSet::new();
+        let data = FeedData {
+            approved: &[],
+            pending: std::slice::from_ref(&post),
+            moderator: false,
+            reacted: &reacted,
+            hint: hint(),
+            viewer_id: Some(7),
+            offset: 0,
+            total: 0,
+        };
+        let page = feed(&data, &Chrome::default(), &styles(), BASE);
+
+        assert!(
+            page.contains("A moderator asked for a change"),
+            "the reason is shown: {page}"
+        );
+        assert!(page.contains("it was the 19th"));
+        assert!(
+            page.contains(&format!("href=\"/news/submit?edit={}\"", post.id)),
+            "and the way to act on it: {page}"
+        );
+
+        // Somebody else's pending entry offers neither.
+        let reacted = HashSet::new();
+        let stranger = FeedData {
+            approved: &[],
+            pending: std::slice::from_ref(&post),
+            moderator: false,
+            reacted: &reacted,
+            hint: hint(),
+            viewer_id: Some(99),
+            offset: 0,
+            total: 0,
+        };
+        let page = feed(&stranger, &Chrome::default(), &styles(), BASE);
+        assert!(!page.contains("/news/submit?edit="), "{page}");
+    }
+
+    #[test]
+    fn a_published_entry_offers_a_moderator_unpublish_and_delete() {
+        let reacted = HashSet::new();
+        let data = FeedData {
+            approved: &[article()],
+            pending: &[],
+            moderator: true,
+            reacted: &reacted,
+            hint: hint(),
+            viewer_id: None,
+            offset: 0,
+            total: 1,
+        };
+        let page = feed(&data, &Chrome::default(), &styles(), BASE);
+        assert!(page.contains("data-action=\"unapprove\""), "{page}");
+        assert!(page.contains("Unpublish"));
+        assert!(
+            page.contains("data-action=\"reject\""),
+            "delete is a rejection"
+        );
+        assert!(page.contains("Delete"));
+
+        // An ordinary reader gets no controls at all.
+        let data = FeedData {
+            approved: &[article()],
+            pending: &[],
+            moderator: false,
+            reacted: &HashSet::new(),
+            hint: hint(),
+            viewer_id: Some(9),
+            offset: 0,
+            total: 1,
+        };
+        let page = feed(&data, &Chrome::default(), &styles(), BASE);
+        assert!(!page.contains("data-action="), "{page}");
     }
 
     #[test]
@@ -1059,6 +1176,7 @@ mod tests {
             moderator: false,
             reacted: &reacted,
             hint: hint(),
+            viewer_id: None,
             offset: 0,
             total: 0,
         };
@@ -1094,6 +1212,7 @@ mod tests {
             moderator: false,
             reacted: &reacted,
             hint: hint(),
+            viewer_id: None,
             offset: 0,
             total: 0,
         };

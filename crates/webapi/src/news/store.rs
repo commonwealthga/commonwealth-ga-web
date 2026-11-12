@@ -423,6 +423,77 @@ pub async fn reject(
     Ok(result.rows_affected() > 0)
 }
 
+/// Replace a submission's content, but only while it is still pending and only
+/// for its author. Editing an approved post would publish unreviewed text, which
+/// is the whole thing pre-moderation exists to prevent.
+pub async fn update_pending(
+    pool: &SqlitePool,
+    id: i64,
+    author_id: i64,
+    entry: &Validated,
+    _now: i64,
+) -> sqlx::Result<bool> {
+    let result = sqlx::query(
+        "UPDATE news_posts
+         SET kind = ?, title = ?, slug = ?, summary = ?, body_markdown = ?, body_html = ?,
+             link = ?, video_id = ?
+         WHERE id = ? AND author_id = ? AND status = ?",
+    )
+    .bind(entry.kind.as_str())
+    .bind(&entry.title)
+    .bind(&entry.slug)
+    .bind(&entry.summary)
+    .bind(&entry.body_markdown)
+    .bind(&entry.body_html)
+    .bind(&entry.link)
+    .bind(entry.videos.first())
+    .bind(id)
+    .bind(author_id)
+    .bind(Status::Pending.as_str())
+    .execute(pool)
+    .await?;
+    let changed = result.rows_affected() > 0;
+    if changed {
+        // Videos are replaced wholesale: the form is the authority on which ones
+        // a post has, so a removed link has to disappear.
+        sqlx::query("DELETE FROM news_videos WHERE post_id = ?")
+            .bind(id)
+            .execute(pool)
+            .await?;
+        attach_videos(pool, id, &entry.videos).await?;
+    }
+    Ok(changed)
+}
+
+/// Take a published post back out of the feed, into the queue, with a note for
+/// its author. This is the "there is a typo in it" action: the content is kept
+/// and the author can fix it, unlike a rejection.
+pub async fn unapprove(
+    pool: &SqlitePool,
+    id: i64,
+    reviewer_id: i64,
+    reviewer_name: &str,
+    note: &str,
+    now: i64,
+) -> sqlx::Result<bool> {
+    let result = sqlx::query(
+        "UPDATE news_posts
+         SET status = ?, reviewed_by_id = ?, reviewed_by_name = ?, reviewed_at = ?,
+             moderation_note = ?
+         WHERE id = ? AND status = ?",
+    )
+    .bind(Status::Pending.as_str())
+    .bind(reviewer_id)
+    .bind(reviewer_name)
+    .bind(now)
+    .bind(note)
+    .bind(id)
+    .bind(Status::Approved.as_str())
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 /// Add or remove this account's thumbs-up. Returns whether it is set now.
 pub async fn set_reaction(
     pool: &SqlitePool,

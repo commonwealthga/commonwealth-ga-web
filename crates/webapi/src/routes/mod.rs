@@ -57,9 +57,10 @@ pub fn api() -> Router<Arc<AppState>> {
         .route("/news/mine", get(news::mine))
         .route("/news/preview", post(news::preview))
         .route("/news/posting-rules", get(pages::posting_rules))
-        .route("/news/{id}", get(news::detail))
+        .route("/news/{id}", get(news::detail).patch(news::update))
         .route("/news/{id}/approve", post(news::approve))
         .route("/news/{id}/reject", post(news::reject))
+        .route("/news/{id}/unapprove", post(news::unapprove))
         .route("/news/{id}/thumb", post(news::thumb))
         // Newest completed missions, for the public archive.
         .route("/matches/recent", get(matches::recent))

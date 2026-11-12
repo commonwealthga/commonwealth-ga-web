@@ -120,47 +120,67 @@
 		}
 	}
 
-	// ---- moderation queue --------------------------------------------------
-	document.querySelectorAll('[data-pending]').forEach(function (card) {
-		var note = card.querySelector('[data-note]');
+	// ---- moderation --------------------------------------------------------
+	// Every action asks before it acts, and the two that take an entry out of the
+	// feed also ask for a reason — that reason is the only thing the author sees.
+	var CONFIRM = {
+		approve: 'publish this entry? It becomes visible to everyone.',
+		unapprove: 'unpublish this entry? It returns to the queue and the author can fix it.',
+		reject: 'delete this entry? It disappears from the feed everywhere and is kept only for review.'
+	};
+
+	var REASON = {
+		unapprove: 'What should the author fix? (shown to them)',
+		reject: 'Why is this being deleted? (kept with the entry)'
+	};
+
+	document.querySelectorAll('[data-action]').forEach(function (button) {
+		var card = button.closest('[data-post-title]');
+		if (!card) return;
+		var id = (card.id || '').replace('post-', '');
+		var title = card.dataset.postTitle || 'this entry';
 		var message = card.querySelector('[data-message]');
-		var buttons = card.querySelectorAll('[data-action]');
 
 		function say(text) {
 			if (!message) return;
 			message.textContent = text;
-			message.classList.remove('hidden');
 		}
 
-		function setBusy(busy) {
-			buttons.forEach(function (button) {
-				button.disabled = busy;
-			});
-		}
+		button.addEventListener('click', function () {
+			var action = button.dataset.action;
 
-		buttons.forEach(function (button) {
-			button.addEventListener('click', function () {
-				var action = button.dataset.action;
-				var value = note ? note.value.trim() : '';
+			// Confirm first: it is the answer to "did you mean that", and it is
+			// mandatory for every one of these buttons.
+			if (!window.confirm('About to ' + CONFIRM[action] + '\n\n"' + title + '"')) return;
 
-				// The server refuses this too; catching it here saves a round trip.
-				if (action === 'reject' && !value) {
-					say('A note is required to reject: say what was wrong with it.');
-					if (note) note.focus();
+			var note = '';
+			if (REASON[action]) {
+				var answer = window.prompt(REASON[action], '');
+				// Cancel means "never mind", not "no reason": an empty reason would
+				// leave the author with nothing to act on.
+				if (answer === null) return;
+				note = answer.trim();
+				if (!note) {
+					say('A reason is required for that.');
 					return;
 				}
+			}
 
-				setBusy(true);
-				post('/api/news/' + card.dataset.pending + '/' + action, { note: value })
-					.then(function () {
-						// Server-rendered: reload so the feed shows the result.
-						window.location.reload();
-					})
-					.catch(function (error) {
-						setBusy(false);
-						say(error.message);
-					});
+			card.querySelectorAll('[data-action]').forEach(function (b) {
+				b.disabled = true;
 			});
+			post('/api/news/' + id + '/' + action, { note: note })
+				.then(function () {
+					// Server-rendered: reload so the feed shows the result.
+					window.location.reload();
+				})
+				.catch(function (error) {
+					card.querySelectorAll('[data-action]').forEach(function (b) {
+						b.disabled = false;
+					});
+					say(error.message);
+				});
 		});
 	});
+
 })();

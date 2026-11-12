@@ -375,8 +375,8 @@ async fn a_moderator_moderates_on_the_feed_itself() {
         "the pending post is on the feed"
     );
     assert!(
-        html.contains(&format!("data-pending=\"{pending}\"")),
-        "{html}"
+        html.contains(&format!("id=\"post-{pending}\"")),
+        "the pending entry is on the feed as a card: {html}"
     );
     assert!(
         html.contains("data-action=\"approve\""),

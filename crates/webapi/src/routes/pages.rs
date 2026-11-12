@@ -91,6 +91,7 @@ pub async fn feed(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Api
         moderator: viewer.roles.moderator,
         reacted: &reacted,
         hint,
+        viewer_id: viewer.session.as_ref().map(|session| session.user_id),
         offset: 0,
         total,
     };
