@@ -107,6 +107,15 @@ pub async fn migrate(pool: &SqlitePool) -> sqlx::Result<()> {
     .execute(pool)
     .await?;
 
+    // The summary column is gone: it was write-only, and a database created
+    // before that change should end up looking like one created after it.
+    // `ok()` because SQLite did not always support dropping a column, and an
+    // unused column is not worth failing a startup over.
+    sqlx::query("ALTER TABLE news_posts DROP COLUMN summary")
+        .execute(pool)
+        .await
+        .ok();
+
     // A post may be the automatic announcement of a published guide or build.
     // It carries its own copy of what the tile shows — title, category, class,
     // image — so the feed never joins across to the guides tables, and an
