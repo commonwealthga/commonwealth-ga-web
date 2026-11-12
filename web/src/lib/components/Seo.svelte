@@ -14,17 +14,35 @@
 		description,
 		type = 'website',
 		image = OG_IMAGE,
-		noindex = false
+		noindex = false,
+		structuredData
 	}: {
 		title: string;
 		description: string;
 		type?: string;
 		image?: string;
 		noindex?: boolean;
+		/** schema.org JSON-LD for this page, if it has any. */
+		structuredData?: Record<string, unknown>;
 	} = $props();
 
 	const canonical = $derived(`${SITE_ORIGIN}${page.url.pathname}`);
 	const imageUrl = $derived(`${SITE_ORIGIN}${image}`);
+
+	/**
+	 * JSON-LD has to be built as a string and injected as markup.
+	 *
+	 * Svelte does not interpolate inside `<script>`, so writing
+	 * `{JSON.stringify(...)}` in the template does not evaluate it — the source
+	 * text itself is served, and Search Console reports the block as unparsable
+	 * ("Missing '}' or object member name"). The `<` escape keeps a value from
+	 * closing the script early; it is the same character in JSON.
+	 */
+	const jsonLd = $derived(
+		structuredData
+			? `<script type="application/ld+json">${JSON.stringify(structuredData).replace(/</g, '\\u003c')}<\/script>`
+			: ''
+	);
 </script>
 
 <svelte:head>
@@ -51,4 +69,7 @@
 	{#if noindex}
 		<meta name="robots" content="noindex, follow" />
 	{/if}
+
+	<!-- Built above, escaped there. -->
+	{@html jsonLd}
 </svelte:head>

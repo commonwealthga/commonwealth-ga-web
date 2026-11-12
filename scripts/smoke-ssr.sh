@@ -103,6 +103,28 @@ if [ "$fail" -ne 0 ]; then
 	exit 1
 fi
 
+# Structured data is read by machines that cannot guess: a block that arrived as
+# template source, or as HTML-escaped entities, is a Search Console error rather
+# than a rich result. Parse it here rather than trusting that it looks right.
+home="$work/home.html"
+curl -fsS -m 15 "http://127.0.0.1:$SITE_PORT/" >"$home"
+python3 - "$home" <<'JSON_CHECK' || exit 1
+import json, re, sys
+
+html = open(sys.argv[1], encoding="utf-8").read()
+blocks = re.findall(r'<script type="application/ld\+json">(.*?)</script>', html, re.S)
+if not blocks:
+    raise SystemExit("FAIL no application/ld+json block on the home page")
+for block in blocks:
+    try:
+        data = json.loads(block)
+    except json.JSONDecodeError as error:
+        raise SystemExit(f"FAIL the JSON-LD block does not parse: {error}")
+    if data.get("@context") != "https://schema.org":
+        raise SystemExit("FAIL the JSON-LD block is not schema.org")
+print("ok   the JSON-LD block parses")
+JSON_CHECK
+
 curl -fsS -m 5 "http://127.0.0.1:$API_PORT/sitemap.xml" | grep -q "<urlset" \
 	|| { echo "FAIL the sitemap did not render" >&2; exit 1; }
 echo "ok   the sitemap renders"

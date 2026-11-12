@@ -7,6 +7,31 @@
 	import { subscribeStatus } from '$lib/live';
 	import { formatCountdown, formatInViewerTime, headlineEvent } from '$lib/events';
 
+	/**
+	 * schema.org description of the game itself, for the home page only: what it
+	 * is, that it is free, and who runs it. `Seo` turns this into the script tag.
+	 */
+	const gameData = {
+		'@context': 'https://schema.org',
+		'@type': 'VideoGame',
+		name: 'Global Agenda',
+		alternateName: 'The Commonwealth — Global Agenda community server',
+		applicationCategory: 'Game',
+		operatingSystem: 'Windows',
+		playMode: ['Cooperative', 'MultiPlayer'],
+		description:
+			'Community-run Global Agenda server with an active playerbase: the 2010 team shooter Hi-Rez shut down in 2018, running again with everything unlocked.',
+		url: 'https://commonwealth.ydns.eu/',
+		image: 'https://commonwealth.ydns.eu/og.jpg',
+		publisher: {
+			'@type': 'Organization',
+			name: 'The Commonwealth',
+			url: 'https://commonwealth.ydns.eu/',
+			sameAs: ['https://discord.gg/CqACf4qArk', 'https://github.com/kithanakodah/cw-globalagenda-ksp']
+		},
+		offers: { '@type': 'Offer', price: '0', priceCurrency: 'GBP' }
+	};
+
 	// Where a newcomer actually needs to go, in plain language.
 	const paths = [
 		{
@@ -107,29 +132,8 @@
 	<Seo
 		title="Global Agenda community server | The Commonwealth"
 		description="A free Global Agenda private server with an active playerbase. Start at level 50 with everything unlocked, play endgame PvE and PvP, and join weekly events."
+		structuredData={gameData}
 	/>
-	<script type="application/ld+json">
-		{JSON.stringify({
-			'@context': 'https://schema.org',
-			'@type': 'VideoGame',
-			name: 'Global Agenda',
-			alternateName: 'The Commonwealth — Global Agenda community server',
-			applicationCategory: 'Game',
-			operatingSystem: 'Windows',
-			playMode: ['Cooperative', 'MultiPlayer'],
-			description:
-				'Community-run Global Agenda server with an active playerbase: the 2010 team shooter Hi-Rez shut down in 2018, running again with everything unlocked.',
-			url: 'https://commonwealth.ydns.eu/',
-			image: 'https://commonwealth.ydns.eu/og.jpg',
-			publisher: {
-				'@type': 'Organization',
-				name: 'The Commonwealth',
-				url: 'https://commonwealth.ydns.eu/',
-				sameAs: ['https://discord.gg/CqACf4qArk', 'https://github.com/kithanakodah/cw-globalagenda-ksp']
-			},
-			offers: { '@type': 'Offer', price: '0', priceCurrency: 'GBP' }
-		})}
-	</script>
 </svelte:head>
 
 <section class="grid items-center gap-12 lg:grid-cols-[1.1fr_0.9fr]">
