@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context;
 use tokio::net::TcpListener;
@@ -84,8 +85,8 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| format!("binding {}", cfg.bind))?;
     tracing::info!(addr = %listener.local_addr()?, "listening");
 
-    axum::serve(listener, app(state))
-        .with_graceful_shutdown(shutdown_signal())
+    axum::serve(listener, app(Arc::clone(&state)))
+        .with_graceful_shutdown(shutdown_signal(Arc::clone(&state)))
         .await
         .context("server error")?;
     Ok(())
@@ -155,7 +156,11 @@ fn warm_caches(state: Arc<AppState>) {
     });
 }
 
-async fn shutdown_signal() {
+/// How long connections get to drain before the process gives up and exits.
+/// Short on purpose: this is a web server, not a database — nothing needs more.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+
+async fn shutdown_signal(state: Arc<AppState>) {
     let ctrl_c = async {
         let _ = tokio::signal::ctrl_c().await;
     };
@@ -176,5 +181,30 @@ async fn shutdown_signal() {
         _ = ctrl_c => {},
         _ = terminate => {},
     }
+
+    tracing::info!("stopping — draining connections; Ctrl-C again exits immediately");
+
+    // Server-sent events are told to hang up, or they would keep the process
+    // alive: an SSE response never ends by itself.
+    let _ = state.shutdown.send(());
+
+    // A second interrupt is an unambiguous "now". Registered after the first
+    // signal on purpose: tokio replaces the default SIGINT action, so without
+    // this the terminal looks deaf to further Ctrl-C.
+    tokio::spawn(async {
+        let _ = tokio::signal::ctrl_c().await;
+        tracing::warn!("second interrupt — exiting now");
+        std::process::exit(130);
+    });
+
+    // And a backstop, for whatever else refuses to drain.
+    tokio::spawn(async {
+        tokio::time::sleep(SHUTDOWN_GRACE).await;
+        tracing::warn!(
+            "connections did not drain within {}s — exiting anyway",
+            SHUTDOWN_GRACE.as_secs()
+        );
+        std::process::exit(0);
+    });
     tracing::info!("shutting down");
 }

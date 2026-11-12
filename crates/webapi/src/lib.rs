@@ -74,6 +74,10 @@ pub struct AppState {
     pub site_pool: Option<SqlitePool>,
     /// Fan-out for `/api/live`.
     pub events: broadcast::Sender<String>,
+    /// Fired once, on shutdown. Server-sent events end on it instead of holding
+    /// the process open: a stream that never finishes is why the server ignored
+    /// Ctrl-C.
+    pub shutdown: broadcast::Sender<()>,
     /// Stylesheets from the frontend build, for the server-rendered news pages.
     /// Resolved once at startup: a new build arrives with a new container.
     pub stylesheets: Vec<String>,
@@ -135,6 +139,7 @@ impl AppState {
         site_pool: Option<SqlitePool>,
     ) -> Arc<Self> {
         let (events, _) = broadcast::channel(EVENT_BUFFER);
+        let (shutdown, _) = broadcast::channel(1);
         let stylesheets = find_stylesheets(&cfg.static_dir);
         let control_addr = cfg.control_addr();
         let status = StatusService::new(
@@ -160,6 +165,7 @@ impl AppState {
             snapshot,
             site_pool,
             events,
+            shutdown,
             stylesheets,
         })
     }

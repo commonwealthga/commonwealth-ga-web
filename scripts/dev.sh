@@ -8,6 +8,8 @@
 # reason.
 #
 #   ./scripts/dev.sh                 # http://127.0.0.1:8080
+#   ./scripts/dev.sh --stop          # stop a server this script started
+#   ./scripts/dev.sh --restart       # stop it, then start again
 #   ./scripts/dev.sh --snapshot      # build a snapshot first, read stats from it
 #                                    # and enable /db-export/<token>
 #   PORT=9000 ./scripts/dev.sh       # somewhere else
@@ -24,9 +26,51 @@ ROOT="$PWD"
 SERVER_REPO="${SERVER_REPO:-$ROOT/../commonwealth-ga-server}"
 CONTROL_CONFIG="${CONTROL_CONFIG:-$SERVER_REPO/control-server.json}"
 PORT="${PORT:-8080}"
+# So `--stop` can find the server without anyone reaching for pgrep. The pid
+# survives `exec`: the shell is replaced, not forked.
+PIDFILE="${PIDFILE:-/tmp/commonwealth-webapi.$PORT.pid}"
 # Loopback by default; set BIND=0.0.0.0 to reach the site from another machine
 # (a phone on the same network, say).
 BIND="${BIND:-127.0.0.1}"
+
+# Stop a running server: SIGTERM, then give it the same grace the server itself
+# allows before insisting.
+stop_server() {
+  if [[ ! -f "$PIDFILE" ]]; then
+    echo "no server recorded for port $PORT ($PIDFILE)" >&2
+    return 1
+  fi
+  local pid
+  pid=$(cat "$PIDFILE" 2>/dev/null || true)
+  if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
+    echo "nothing running on port $PORT (stale pidfile removed)" >&2
+    rm -f "$PIDFILE"
+    return 1
+  fi
+  echo "stopping pid $pid…" >&2
+  kill "$pid" 2>/dev/null || true
+  for _ in $(seq 1 60); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      echo "stopped" >&2
+      rm -f "$PIDFILE"
+      return 0
+    fi
+    sleep 0.1
+  done
+  echo "still alive after 6s — killing" >&2
+  kill -9 "$pid" 2>/dev/null || true
+  rm -f "$PIDFILE"
+  return 0
+}
+
+case "${1:-}" in
+  --stop|-s) stop_server; exit $? ;;
+  --restart|-r) stop_server || true; shift ;;
+  --help|-h)
+    sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+    exit 0
+    ;;
+esac
 
 # Rebuild when the binary is missing OR older than the sources. A stale binary
 # serves the old behaviour and makes a fresh change look broken: that is exactly
@@ -48,8 +92,9 @@ done
 # Fail early and clearly if the port is taken — the raw bind error arrives after
 # the snapshot work, which makes it look like the snapshotter failed.
 if (command -v ss >/dev/null && ss -ltn 2>/dev/null | grep -q "[:.]$PORT\b"); then
-  echo "port $PORT is already in use (another dev server?)." >&2
-  echo "Try: PORT=8081 ./scripts/dev.sh$([[ $snapshot_mode -eq 1 ]] && echo ' --snapshot')" >&2
+  echo "port $PORT is already in use." >&2
+  echo "Stop it:  ./scripts/dev.sh --stop" >&2
+  echo "Or move:  PORT=8081 ./scripts/dev.sh$([[ $snapshot_mode -eq 1 ]] && echo ' --snapshot')" >&2
   exit 1
 fi
 
@@ -109,4 +154,8 @@ fi
 if [[ -n "${WEB_DB_EXPORT_TOKEN:-}" ]]; then
   echo "export  : http://$BIND:$PORT/db-export/$WEB_DB_EXPORT_TOKEN"
 fi
+echo "stop    : ./scripts/dev.sh --stop   (or Ctrl-C twice)"
+# Written after every check has passed: a pidfile for a server that never bound
+# would send `--stop` after the wrong process.
+echo $$ > "$PIDFILE"
 exec "$ROOT/target/release/webapi"

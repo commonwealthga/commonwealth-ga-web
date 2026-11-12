@@ -272,7 +272,16 @@ links diverge.
 
 ```bash
 ./scripts/dev.sh            # http://127.0.0.1:8080
+./scripts/dev.sh --stop     # stop it again
+./scripts/dev.sh --restart  # stop, then start (picks up Rust changes)
 ```
+
+Stopping is one command because the alternative is not obvious: the server holds
+open the server-sent-event connections from any browser tab, and a graceful
+shutdown would wait on a stream that never ends. So `Ctrl-C` drains (the SSE
+streams are hung up for you), a **second** `Ctrl-C` exits immediately, and a
+5-second backstop exits regardless. `--stop` sends `SIGTERM`, waits the same
+grace, and only then uses `SIGKILL`.
 
 The script builds if needed, points at the game server repo's `server.db`, and
 reads the control server's `admin_token` out of its `control-server.json` so

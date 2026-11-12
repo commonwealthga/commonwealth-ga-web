@@ -8,7 +8,7 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use serde_json::json;
 use tokio_stream::StreamExt;
-use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::wrappers::ReceiverStream;
 
 use crate::AppState;
 use crate::status::StatusPayload;
@@ -87,11 +87,34 @@ pub async fn live(
         .event("status")
         .data(serde_json::to_string(&initial).unwrap_or_else(|_| "{}".to_string()));
 
-    let broadcast = BroadcastStream::new(state.events.subscribe())
-        .filter_map(|message| message.ok())
-        .map(|json| Ok(Event::default().event("status").data(json)));
+    // Forward updates through a channel so the stream has an end: an SSE
+    // response never finishes on its own, which is what made shutdown wait
+    // forever for a browser tab. Closing the channel is how this stream hangs up.
+    let (tx, rx) = tokio::sync::mpsc::channel(16);
+    let mut updates = state.events.subscribe();
+    let mut stopping = state.shutdown.subscribe();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = stopping.recv() => break,
+                received = updates.recv() => match received {
+                    Ok(json) => {
+                        let event = Event::default().event("status").data(json);
+                        // A closed receiver means the client disconnected.
+                        if tx.send(Ok(event)).await.is_err() {
+                            break;
+                        }
+                    }
+                    // A slow client missing ticks is fine: the next tick is 15s
+                    // away and carries the whole state.
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                },
+            }
+        }
+    });
 
-    let stream = tokio_stream::once(Ok(initial_event)).chain(broadcast);
+    let stream = tokio_stream::once(Ok(initial_event)).chain(ReceiverStream::new(rx));
 
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
