@@ -68,6 +68,7 @@ pub fn api() -> Router<Arc<AppState>> {
         // Guides and builds: two categories, one moderation queue, one shape.
         .route("/guides", get(guides::feed).post(guides::submit))
         .route("/guides/options", get(guides::options))
+        .route("/guides/preview", post(guides::preview))
         // The body *is* the image; the default 2 MB body limit is raised to the
         // upload cap so a legitimate screenshot is not refused as too large.
         .route(

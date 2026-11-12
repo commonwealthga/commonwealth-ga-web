@@ -77,7 +77,6 @@ export interface RulesResponse extends PostingRules {
 		per_day: number;
 		max_videos: number;
 	};
-	formatting_help: string;
 }
 
 export type ModeratorAction = 'approve' | 'reject' | 'unapprove' | 'note';

@@ -102,6 +102,9 @@ pub struct EntryView {
     pub discord_url: Option<String>,
     /// Set for builds: `/images/<hash>.webp`, the sanitiser's output.
     pub image_url: Option<String>,
+    /// The same image at tile width, for lists. Falls back to nothing, in which
+    /// case the card uses the full-size one.
+    pub image_tile_url: Option<String>,
     /// The stored image's id, so an edit that does not replace the screenshot
     /// can send the one it already has.
     pub image_id: Option<i64>,
@@ -152,6 +155,10 @@ impl EntryView {
                 .image_hash
                 .as_ref()
                 .map(|hash| format!("/images/{hash}.webp")),
+            image_tile_url: entry
+                .image_hash
+                .as_ref()
+                .map(|hash| format!("/images/{hash}.tile.webp")),
             image_id: entry.image_id,
             author: entry.author_name.clone(),
             created_at: entry.created_at,
@@ -438,7 +445,6 @@ pub async fn options(
             "max_upload_width": images::MAX_WIDTH,
         },
         "posting": posting(&state, site, &viewer).await?,
-        "formatting_help": access::FORMATTING_HELP,
     }))
     .into_response())
 }
@@ -655,6 +661,11 @@ pub async fn upload(
     images::save(&state.cfg.images_dir, &sanitised)
         .await
         .map_err(|error| AppError::Internal(anyhow::Error::new(error)))?;
+    // The list tiles use this one; failing to make it is not worth losing the
+    // upload over, and the next startup fill-in will retry it.
+    let dir = state.cfg.images_dir.clone();
+    let hash = sanitised.hash.clone();
+    let _ = tokio::task::spawn_blocking(move || images::ensure_tile(&dir, &hash)).await;
 
     let id = store::create_image(
         site,
@@ -671,9 +682,29 @@ pub async fn upload(
     Ok(Json(serde_json::json!({
         "image_id": id,
         "url": format!("/images/{}.webp", sanitised.hash),
+        "tile_url": format!("/images/{}.tile.webp", sanitised.hash),
         "width": sanitised.width,
         "height": sanitised.height,
         "bytes": sanitised.bytes.len(),
+    }))
+    .into_response())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PreviewBody {
+    #[serde(default)]
+    body: String,
+}
+
+/// `POST /api/guides/preview` — render Markdown exactly as a guide body will be
+/// rendered, so the editor cannot show a preview the published page disagrees
+/// with. Same renderer, same subset, including the callouts.
+pub async fn preview(Json(body): Json<PreviewBody>) -> ApiResult<Response> {
+    // A preview is not a submission: it is truncated rather than refused, so a
+    // half-written paragraph still previews while someone types.
+    let source: String = body.body.chars().take(guides::BODY_MAX).collect();
+    Ok(Json(serde_json::json!({
+        "html": crate::news::markdown::to_html(&source),
     }))
     .into_response())
 }

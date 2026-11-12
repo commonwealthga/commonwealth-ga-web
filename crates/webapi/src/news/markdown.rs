@@ -8,7 +8,9 @@
 //!
 //! The subset is deliberately small — it is what the editor's toolbar offers:
 //! paragraphs, `##`/`###` headings (the page owns `<h1>`), bold, italic, links,
-//! bullet and numbered lists, blockquotes, inline code and fenced code. Raw HTML
+//! bullet and numbered lists, blockquotes, inline code and fenced code, plus the
+//! two callouts authors actually reach for (`> [!WARNING]` and `> [!INFO]`, the
+//! syntax GitHub uses). Raw HTML
 //! in a post is escaped and shown as text rather than dropped, so an author who
 //! pastes `<b>` sees why it did not work. Images are not rendered at all: there
 //! are no uploads, and hotlinked images are a tracking surface with no
@@ -25,13 +27,17 @@ enum Open {
 }
 
 pub fn to_html(markdown: &str) -> String {
+    let markdown = hoist_callouts(markdown);
     let mut out = String::with_capacity(markdown.len() + markdown.len() / 4);
     let mut stack: Vec<Open> = Vec::new();
     // While inside `![alt](src)` everything is discarded, including the
     // emphasis a caption might contain.
     let mut image_depth = 0usize;
+    // While inside a callout the fenced block's text is the inner Markdown, so
+    // it is rendered rather than escaped as code.
+    let mut in_callout = false;
 
-    for event in Parser::new_ext(markdown, Options::empty()) {
+    for event in Parser::new_ext(&markdown, Options::empty()) {
         if image_depth > 0 {
             match event {
                 Event::Start(Tag::Image { .. }) => image_depth += 1,
@@ -70,6 +76,17 @@ pub fn to_html(markdown: &str) -> String {
                     stack.push(Open::Tag("</blockquote>"));
                 }
                 Tag::CodeBlock(kind) => {
+                    // A callout arrives as a fenced block with a reserved info
+                    // string, because a blockquote is the wrong shape to hang
+                    // styling on and the pre-pass already knows where it ends.
+                    if let CodeBlockKind::Fenced(info) = &kind
+                        && let Some(kind) = callout_kind(info.trim())
+                    {
+                        out.push_str(callout_open(kind));
+                        stack.push(Open::Tag("</div>"));
+                        in_callout = true;
+                        continue;
+                    }
                     out.push_str("<pre><code");
                     if let CodeBlockKind::Fenced(info) = kind {
                         let language: String = info
@@ -125,12 +142,29 @@ pub fn to_html(markdown: &str) -> String {
                 if let TagEnd::Image = tag {
                     continue;
                 }
+                if in_callout {
+                    // The closing fence belongs to the callout, not to a tag.
+                    if matches!(tag, TagEnd::CodeBlock) {
+                        in_callout = false;
+                        if let Some(Open::Tag(close)) = stack.pop() {
+                            out.push_str(close);
+                        }
+                        continue;
+                    }
+                }
                 match stack.pop() {
                     Some(Open::Tag(close)) => out.push_str(close),
                     Some(Open::Nothing) | None => {}
                 }
             }
-            Event::Text(text) => escape_into(&mut out, &text),
+            Event::Text(text) => {
+                if in_callout {
+                    // The inner Markdown, rendered by the same rules.
+                    out.push_str(&to_html(&text));
+                } else {
+                    escape_into(&mut out, &text);
+                }
+            }
             Event::Code(code) => {
                 out.push_str("<code>");
                 escape_into(&mut out, &code);
@@ -154,6 +188,114 @@ pub fn to_html(markdown: &str) -> String {
         if let Open::Tag(close) = open {
             out.push_str(close);
         }
+    }
+
+    out
+}
+
+/// Which callout a fenced block's info string asks for.
+fn callout_kind(info: &str) -> Option<&'static str> {
+    match info {
+        "callout-warning" => Some("warning"),
+        "callout-info" => Some("info"),
+        _ => None,
+    }
+}
+
+/// The icon is written here, not by the author: a sentence in a fixed SVG that
+/// cannot carry anything, styled with `currentColor` so it inherits the callout's.
+fn callout_open(kind: &str) -> &'static str {
+    match kind {
+        "warning" => {
+            "<div class=\"callout callout-warning\"><p class=\"callout-title\">\
+             <svg class=\"callout-icon\" viewBox=\"0 0 16 16\" aria-hidden=\"true\" fill=\"none\" \
+             stroke=\"currentColor\" stroke-width=\"1.4\" stroke-linejoin=\"round\">\
+             <path d=\"M8 2.2 14.6 13.4H1.4z\"/><path d=\"M8 6.4v3.1\" stroke-linecap=\"round\"/>\
+             <circle cx=\"8\" cy=\"11.6\" r=\"0.7\" fill=\"currentColor\" stroke=\"none\"/></svg>\
+             Warning</p>"
+        }
+        _ => {
+            "<div class=\"callout callout-info\"><p class=\"callout-title\">\
+             <svg class=\"callout-icon\" viewBox=\"0 0 16 16\" aria-hidden=\"true\" fill=\"none\" \
+             stroke=\"currentColor\" stroke-width=\"1.4\">\
+             <circle cx=\"8\" cy=\"8\" r=\"6.3\"/>\
+             <path d=\"M8 7.2v4\" stroke-linecap=\"round\"/>\
+             <circle cx=\"8\" cy=\"4.9\" r=\"0.75\" fill=\"currentColor\" stroke=\"none\"/></svg>\
+             Info</p>"
+        }
+    }
+}
+
+/// Rewrite `> [!WARNING]` blocks into fenced blocks the renderer recognises.
+///
+/// GitHub's own alert syntax, because that is what people already write. A
+/// blockquote is kept as the author wrote it in every other case, and fenced
+/// code is skipped so a pasted example is not rewritten into a callout.
+fn hoist_callouts(markdown: &str) -> String {
+    let mut out = String::with_capacity(markdown.len());
+    let mut lines = markdown.lines().peekable();
+    let mut in_fence = false;
+
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+
+        if in_fence {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+
+        // A blockquote whose first line names a callout: collect its body.
+        let Some(rest) = trimmed
+            .strip_prefix('>')
+            .map(str::trim_start)
+            .and_then(|rest| rest.strip_prefix("[!"))
+            .and_then(|rest| rest.split_once(']'))
+        else {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        };
+        let (name, tail) = rest;
+        let kind = match name.trim().to_ascii_uppercase().as_str() {
+            "WARNING" | "CAUTION" | "DANGER" => "warning",
+            "INFO" | "NOTE" | "TIP" | "IMPORTANT" => "info",
+            _ => {
+                out.push_str(line);
+                out.push('\n');
+                continue;
+            }
+        };
+
+        // Everything this blockquote owns becomes the callout's body.
+        let mut body = String::new();
+        let tail = tail.trim();
+        if !tail.is_empty() {
+            body.push_str(tail);
+            body.push('\n');
+        }
+        while let Some(next) = lines.peek() {
+            let next_trimmed = next.trim_start();
+            let Some(content) = next_trimmed.strip_prefix('>') else {
+                break;
+            };
+            body.push_str(content.strip_prefix(' ').unwrap_or(content));
+            body.push('\n');
+            lines.next();
+        }
+
+        out.push_str("```callout-");
+        out.push_str(kind);
+        out.push('\n');
+        out.push_str(body.trim_end());
+        out.push('\n');
+        out.push_str("```\n");
     }
 
     out
@@ -220,6 +362,51 @@ mod tests {
         // only h1.
         assert_eq!(to_html("# Top"), "<h2>Top</h2>");
         assert_eq!(to_html("#### Deep"), "<h3>Deep</h3>");
+    }
+
+    #[test]
+    fn a_github_alert_becomes_a_callout_with_an_icon() {
+        let html = to_html("> [!WARNING]\n> Suits are wiped on relog.");
+        assert!(html.contains("callout callout-warning"), "{html}");
+        assert!(html.contains("Warning"), "{html}");
+        assert!(html.contains("<svg"), "{html}");
+        assert!(html.contains("Suits are wiped on relog."), "{html}");
+        assert!(!html.contains("[!WARNING]"), "{html}");
+    }
+
+    #[test]
+    fn shorter_alert_names_map_onto_the_two_styles() {
+        for name in ["NOTE", "TIP", "IMPORTANT", "info"] {
+            let html = to_html(&format!("> [!{name}]\n> Something."));
+            assert!(html.contains("callout-info"), "{name}: {html}");
+        }
+        for name in ["CAUTION", "DANGER", "warning"] {
+            let html = to_html(&format!("> [!{name}]\n> Careful."));
+            assert!(html.contains("callout-warning"), "{name}: {html}");
+        }
+    }
+
+    #[test]
+    fn a_callout_body_keeps_its_own_formatting() {
+        let html = to_html("> [!INFO]\n> Read the **bold** part.\n>\n> - and the list");
+        assert!(html.contains("<strong>bold</strong>"), "{html}");
+        assert!(html.contains("<li>"), "{html}");
+    }
+
+    #[test]
+    fn ordinary_quotes_and_code_fences_are_untouched() {
+        let quote = to_html("> Just a quote.");
+        assert!(quote.contains("<blockquote>"), "{quote}");
+        assert!(!quote.contains("callout"), "{quote}");
+
+        // An alert *inside* a code fence is an example, not a callout.
+        let fenced = to_html("```\n> [!WARNING]\n> no\n```");
+        assert!(!fenced.contains("callout"), "{fenced}");
+        assert!(fenced.contains("[!WARNING]"), "{fenced}");
+
+        // An unknown name stays a quote rather than inventing a third style.
+        let unknown = to_html("> [!SOMETHING]\n> text");
+        assert!(unknown.contains("<blockquote>"), "{unknown}");
     }
 
     #[test]

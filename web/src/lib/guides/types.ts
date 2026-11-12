@@ -30,6 +30,8 @@ export interface Entry {
 	discord_url: string | null;
 	/** A build's sanitised screenshot: `/images/<hash>.webp`. */
 	image_url: string | null;
+	/** The same image at tile width, for lists. */
+	image_tile_url: string | null;
 	/** The stored image's id, resent on an edit that keeps the same screenshot. */
 	image_id: number | null;
 	author: string;
@@ -110,12 +112,12 @@ export interface OptionsResponse {
 		max_upload_width: number;
 	};
 	posting: Posting;
-	formatting_help: string;
 }
 
 export interface UploadedImage {
 	image_id: number;
 	url: string;
+	tile_url?: string;
 	width: number;
 	height: number;
 	bytes: number;

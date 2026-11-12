@@ -169,6 +169,155 @@ body {
 	border-style: solid;
 }
 
+/* ---------------------------------------------------------------------------
+   Rendered Markdown: news bodies, guides, build descriptions.
+
+   Preflight strips headings, lists, quotes and code down to plain text, which
+   is why a post looked like one undifferentiated block. These rules give the
+   renderer's output the shape it was written with — the renderer already
+   restricts *which* tags can appear, so this is presentation only.
+   --------------------------------------------------------------------------- */
+
+.prose-news > * + * {
+	margin-top: 1rem;
+}
+
+.prose-news h2 {
+	font-family: var(--font-display);
+	font-size: 1.45rem;
+	line-height: 1.2;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--color-ink);
+	margin-top: 1.75rem;
+}
+.prose-news h2:first-child {
+	margin-top: 0;
+}
+
+.prose-news h3 {
+	font-family: var(--font-display);
+	font-size: 1.15rem;
+	line-height: 1.25;
+	letter-spacing: 0.05em;
+	text-transform: uppercase;
+	color: var(--color-ink);
+	margin-top: 1.5rem;
+}
+
+.prose-news strong {
+	color: var(--color-ink);
+	font-weight: 500;
+}
+.prose-news em {
+	font-style: italic;
+}
+
+.prose-news a {
+	color: var(--color-ember);
+	text-decoration: underline;
+	text-decoration-color: color-mix(in oklab, var(--color-ember) 40%, transparent);
+	text-underline-offset: 3px;
+}
+.prose-news a:hover {
+	color: var(--color-amber);
+}
+
+.prose-news ul,
+.prose-news ol {
+	padding-left: 1.35rem;
+}
+.prose-news ul {
+	list-style: disc;
+}
+.prose-news ol {
+	list-style: decimal;
+}
+.prose-news li + li {
+	margin-top: 0.35rem;
+}
+.prose-news li::marker {
+	color: var(--color-ember);
+}
+
+.prose-news blockquote {
+	border-left: 2px solid var(--color-line-hi);
+	padding-left: 1rem;
+	color: var(--color-dim);
+}
+
+.prose-news code {
+	font-family: var(--font-mono);
+	font-size: 0.9em;
+	background: var(--color-carbon);
+	border: 1px solid var(--color-line);
+	padding: 0.05rem 0.3rem;
+	color: var(--color-ink);
+}
+
+.prose-news pre {
+	background: var(--color-carbon);
+	border: 1px solid var(--color-line);
+	padding: 0.9rem 1rem;
+	overflow-x: auto;
+}
+.prose-news pre code {
+	background: none;
+	border: 0;
+	padding: 0;
+	font-size: 0.85em;
+	color: var(--color-dim);
+}
+
+.prose-news hr {
+	border-color: var(--color-line);
+}
+
+/* Callouts: `> [!WARNING]` and `> [!INFO]`. Not a link, so they keep the
+   corner ticks like every other bordered box on the site. */
+.prose-news .callout {
+	border: 1px solid;
+	padding: 0.85rem 1rem;
+}
+.prose-news .callout > * + * {
+	margin-top: 0.6rem;
+}
+
+.prose-news .callout-title {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	font-family: var(--font-display);
+	font-size: 0.78rem;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	margin: 0;
+}
+
+.prose-news .callout-icon {
+	width: 0.95rem;
+	height: 0.95rem;
+	flex: none;
+}
+
+.prose-news .callout-warning {
+	border-color: color-mix(in oklab, var(--color-amber) 45%, transparent);
+	background: color-mix(in oklab, var(--color-amber) 7%, transparent);
+	color: var(--color-dim);
+}
+.prose-news .callout-warning .callout-title {
+	color: var(--color-amber);
+}
+
+.prose-news .callout-info {
+	border-color: color-mix(in oklab, var(--color-steel) 45%, transparent);
+	background: color-mix(in oklab, var(--color-steel) 7%, transparent);
+	color: var(--color-dim);
+}
+.prose-news .callout-info .callout-title {
+	color: var(--color-steel);
+}
+
 /* Tailwind's preflight leaves buttons with the default arrow cursor, which made
    every control on the site read as a label rather than something pressable.
    One rule here beats repeating `cursor-pointer` on each button. */

@@ -187,7 +187,12 @@
 				{#if post.guide}
 					<!-- An announcement is a pointer at a guide or build: drawn as that
 					     entry's tile, full width, rather than as a news card. -->
-					<GuideAnnouncement guide={post.guide} author={post.author} createdAt={post.created_at} />
+					<GuideAnnouncement
+						guide={post.guide}
+						author={post.author}
+						createdAt={post.created_at}
+						id={post.id}
+					/>
 				{:else}
 					<NewsCard {post} moderator={feed.moderator} />
 				{/if}

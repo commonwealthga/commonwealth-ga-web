@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import Panel from '$lib/components/Panel.svelte';
+	import MarkdownEditor from '$lib/components/MarkdownEditor.svelte';
 	import Seo from '$lib/components/Seo.svelte';
 
 	/**
@@ -49,11 +50,9 @@
 	let title = $state('');
 	let body = $state('');
 	let videoLinks = $state('');
-	let preview = $state('');
 	let message = $state('');
 	let problem = $state('');
 	let phase = $state<'loading' | 'ready' | 'sending' | 'sent' | 'error'>('loading');
-	let bodyEl = $state<HTMLTextAreaElement | null>(null);
 
 	// Editing an entry that is still waiting for review: same form, different
 	// verb. `/news/submit?edit=12`. Read in the browser: this page is
@@ -142,76 +141,6 @@
 		};
 	});
 
-	// Preview, rendered by the server with the same function that stores the
-	// body, so it cannot flatter the result.
-	let previewTimer: ReturnType<typeof setTimeout> | undefined;
-	$effect(() => {
-		const source = body;
-		clearTimeout(previewTimer);
-		if (!hasEditor || !source.trim()) {
-			preview = '';
-			return;
-		}
-		previewTimer = setTimeout(() => {
-			fetch('/api/news/preview', {
-				method: 'POST',
-				credentials: 'same-origin',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ body: source })
-			})
-				.then((response) => (response.ok ? response.json() : Promise.reject(response.status)))
-				.then((data: { html: string }) => {
-					preview = data.html;
-				})
-				.catch(() => {
-					preview = '';
-				});
-		}, 350);
-	});
-
-	function apply(wrap: string, prefix = false) {
-		const el = bodyEl;
-		if (!el) return;
-		const start = el.selectionStart ?? 0;
-		const end = el.selectionEnd ?? 0;
-		const chosen = body.slice(start, end);
-
-		if (prefix) {
-			const lineStart = body.lastIndexOf('\n', start - 1) + 1;
-			body = body.slice(0, lineStart) + wrap + body.slice(lineStart);
-			requestAnimationFrame(() => {
-				el.focus();
-				el.selectionStart = start + wrap.length;
-				el.selectionEnd = end + wrap.length;
-			});
-			return;
-		}
-
-		const text = chosen || 'text';
-		body = body.slice(0, start) + wrap + text + wrap + body.slice(end);
-		requestAnimationFrame(() => {
-			el.focus();
-			el.selectionStart = start + wrap.length;
-			el.selectionEnd = start + wrap.length + text.length;
-		});
-	}
-
-	function makeLink() {
-		const el = bodyEl;
-		if (!el) return;
-		const start = el.selectionStart ?? 0;
-		const end = el.selectionEnd ?? 0;
-		const text = body.slice(start, end) || 'link text';
-		const snippet = `[${text}](https://)`;
-		body = body.slice(0, start) + snippet + body.slice(end);
-		requestAnimationFrame(() => {
-			el.focus();
-			const urlStart = start + text.length + 3;
-			el.selectionStart = urlStart;
-			el.selectionEnd = urlStart + 8;
-		});
-	}
-
 	async function submit(event: SubmitEvent) {
 		event.preventDefault();
 		if (phase === 'sending') return;
@@ -246,7 +175,6 @@
 			title = '';
 			body = '';
 			videoLinks = '';
-			preview = '';
 		} catch {
 			problem = 'Could not reach the server. Your text is still here — try again.';
 			phase = 'ready';
@@ -401,48 +329,14 @@
 					</label>
 
 					<div class="flex flex-col gap-1.5">
-						<span class="label flex justify-between text-faint">
-							<span>Body</span>
-							<span>{body.length}/{rules.limits.body_max}</span>
-						</span>
-						<div class="flex flex-wrap gap-1 border border-line/70 bg-panel/60 px-2 py-1.5">
-							{#each [
-								{ text: 'B', title: 'Bold', run: () => apply('**') },
-								{ text: 'I', title: 'Italic', run: () => apply('_') },
-								{ text: 'H2', title: 'Heading', run: () => apply('## ', true) },
-								{ text: 'H3', title: 'Smaller heading', run: () => apply('### ', true) },
-								{ text: '•', title: 'Bullet list', run: () => apply('- ', true) },
-								{ text: '1.', title: 'Numbered list', run: () => apply('1. ', true) },
-								{ text: '❝', title: 'Quote', run: () => apply('> ', true) },
-								{ text: '‹›', title: 'Code', run: () => apply('`') },
-								{ text: '{ }', title: 'Code block', run: () => apply('```\n', true) },
-								{ text: '🔗', title: 'Link', run: makeLink }
-							] as tool (tool.title)}
-								<button
-									type="button"
-									class="label px-2 py-1 text-dim transition-colors hover:bg-panel-hi hover:text-ink"
-									title={tool.title}
-									onclick={tool.run}>{tool.text}</button
-								>
-							{/each}
-						</div>
-						<textarea
-							bind:this={bodyEl}
-							class="min-h-64 border border-line/70 bg-panel/60 px-3 py-2 font-mono text-sm leading-relaxed text-ink"
-							maxlength={rules.limits.body_max}
+						<span class="label text-faint">Body</span>
+						<MarkdownEditor
 							bind:value={body}
+							maxlength={rules.limits.body_max}
+							previewUrl="/api/news/preview"
 							placeholder={'## Prep\n\nBring **two** medkits and _do not_ rush the lift.'}
-						></textarea>
+						/>
 					</div>
-
-					{#if preview}
-						<div class="panel-ticks border border-line/60 bg-carbon/40 p-4">
-							<span class="label text-faint">Preview</span>
-							<div class="mt-2 flex flex-col gap-3 text-sm leading-relaxed text-dim">
-								{@html preview}
-							</div>
-						</div>
-					{/if}
 				{/if}
 
 				{#if problem}

@@ -511,6 +511,27 @@ pub async fn images_since(pool: &SqlitePool, author_id: i64, since: i64) -> sqlx
         .await
 }
 
+/// Hashes whose tile derivative is not on disk yet.
+///
+/// The tile is a cache, so this is the only place that has to know it might be
+/// missing: the image table is the record of what was stored, and the file
+/// system says which sizes exist.
+pub async fn image_hashes_missing_tiles(
+    pool: &SqlitePool,
+    dir: &std::path::Path,
+    limit: i64,
+) -> sqlx::Result<Vec<String>> {
+    let hashes: Vec<String> =
+        sqlx::query_scalar("SELECT hash FROM guide_images ORDER BY created_at DESC LIMIT ?")
+            .bind(limit)
+            .fetch_all(pool)
+            .await?;
+    Ok(hashes
+        .into_iter()
+        .filter(|hash| !dir.join(format!("{hash}.tile.webp")).exists())
+        .collect())
+}
+
 /// Who uploaded this image. A submission may only reference its own author's
 /// uploads: an id guessed from the sequence would otherwise let one account
 /// attach another's screenshot, or one that was never sanitised by them.

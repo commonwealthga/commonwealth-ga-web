@@ -13,13 +13,17 @@
 	let {
 		guide,
 		author,
-		createdAt
-	}: { guide: GuidePointer; author: string; createdAt: number } = $props();
+		createdAt,
+		id
+	}: { guide: GuidePointer; author: string; createdAt: number; id?: number } = $props();
 
 	const base = $derived(guide.category === 'build' ? '/builds' : '/guides');
 </script>
 
-<article class="border border-line/70 bg-carbon/40 transition-colors hover:border-ember/60">
+<article
+	id={id ? `post-${id}` : undefined}
+	class="border border-line/70 bg-carbon/40 transition-colors hover:border-ember/60"
+>
 	<p class="label border-b border-line/60 px-4 py-2 text-faint">
 		<span class="text-dim">{author}</span> has posted a {guide.category}
 		· <time datetime={new Date(createdAt * 1000).toISOString().slice(0, 10)}>{newsDate(createdAt)}</time>

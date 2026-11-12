@@ -67,7 +67,6 @@ pub async fn posting_rules(
             "per_day": crate::news::RATE_LIMIT,
             "max_videos": crate::news::MAX_VIDEOS,
         },
-        "formatting_help": access::FORMATTING_HELP,
     }))
     .into_response())
 }

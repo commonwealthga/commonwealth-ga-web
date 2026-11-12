@@ -144,28 +144,6 @@ pub fn may_post(mode: PostingMode, roles: Roles) -> Result<(), Denial> {
     }
 }
 
-/// Markdown for the "how to post" help text, so the editor and the rules page
-/// cannot drift apart: the one list of what the renderer accepts.
-pub const FORMATTING_HELP: &str = "\
-**bold**, _italic_, `code`
-
-## Heading
-
-### Smaller heading
-
-- bullet
-- bullet
-
-1. numbered
-
-> quote
-
-```
-code block
-```
-
-[link](https://example.org)";
-
 /// Render a preview for the editor, using the same renderer the post will be
 /// served with — the preview cannot flatter the result.
 pub fn preview(markdown_source: &str) -> String {
@@ -286,29 +264,5 @@ mod tests {
             Ok(()),
             "a moderator must not be locked out of their own queue"
         );
-    }
-
-    #[test]
-    fn the_help_text_describes_what_the_renderer_accepts() {
-        // Rendered through the real renderer, so this fails if the help text
-        // advertises something posts cannot contain.
-        let html = preview(FORMATTING_HELP);
-        for expected in [
-            "<strong>",
-            "<em>",
-            "<h2>",
-            "<h3>",
-            "<ul>",
-            "<ol>",
-            "<blockquote>",
-            "<code>",
-            "<pre>",
-            "<a href=",
-        ] {
-            assert!(
-                html.contains(expected),
-                "help text should demonstrate {expected}: {html}"
-            );
-        }
     }
 }

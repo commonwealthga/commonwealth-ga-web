@@ -80,7 +80,7 @@
 		{#if entry.image_url}
 			<div class="border-b border-line/60 bg-void/40">
 				<img
-					src={entry.image_url}
+					src={entry.image_tile_url ?? entry.image_url}
 					alt="Skill tree for the {entry.class_label} build"
 					loading="lazy"
 					class="aspect-[16/10] w-full object-cover"

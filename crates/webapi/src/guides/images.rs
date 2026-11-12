@@ -38,6 +38,10 @@ pub const MAX_WIDTH: u32 = 1_600;
 /// A stored image that is still bigger than this after re-encoding is not a
 /// screenshot; step the width down until it fits.
 pub const MAX_STORED_BYTES: usize = 3 * 1024 * 1024;
+/// The list tiles show a build at roughly 220 px wide, so this is its @2x. A
+/// 1.5 MB full-size screenshot in a thumbnail is most of a phone's data budget
+/// for one screen.
+pub const TILE_WIDTH: u32 = 480;
 const WIDTHS: [u32; 3] = [MAX_WIDTH, 1_280, 1_024];
 
 /// Uploads allowed per account per window. Generous for a person posting builds,
@@ -87,9 +91,14 @@ pub struct Sanitised {
 }
 
 impl Sanitised {
-    /// `<hash>.webp` — the only name this image will ever have.
+    /// `<hash>.webp` — the full-size derivative.
     pub fn file_name(&self) -> String {
         format!("{}.webp", self.hash)
+    }
+
+    /// `<hash>.tile.webp` — the same image at tile width, for lists.
+    pub fn tile_file_name(&self) -> String {
+        format!("{}.tile.webp", self.hash)
     }
 }
 
@@ -173,25 +182,82 @@ fn hex(bytes: &[u8]) -> String {
     out
 }
 
-/// Write the derivative under `<dir>/<hash>.webp`. Idempotent: the same image
-/// twice finds the file already there and writes nothing.
+/// Write the full-size derivative under `<dir>/<hash>.webp`. Idempotent: the
+/// same image twice finds the file already there and writes nothing.
 pub async fn save(dir: &Path, image: &Sanitised) -> std::io::Result<PathBuf> {
     tokio::fs::create_dir_all(dir).await?;
-    let path = dir.join(image.file_name());
-    if tokio::fs::metadata(&path).await.is_err() {
-        // Write beside the target and rename: a half-written file must never be
-        // servable, and the name is a hash of the content it is supposed to have.
-        let temp = dir.join(format!("{}.part", image.hash));
-        tokio::fs::write(&temp, &image.bytes).await?;
-        tokio::fs::rename(&temp, &path).await?;
+    write_once(dir, &image.hash, image.file_name(), &image.bytes).await?;
+    Ok(dir.join(image.file_name()))
+}
+
+async fn write_once(dir: &Path, hash: &str, name: String, bytes: &[u8]) -> std::io::Result<()> {
+    let path = dir.join(name);
+    if tokio::fs::metadata(&path).await.is_ok() {
+        return Ok(());
     }
-    Ok(path)
+    // Write beside the target and rename: a half-written file must never be
+    // servable, and the name is a hash of the content it is supposed to have.
+    let temp = dir.join(format!("{hash}.{}.part", std::process::id()));
+    tokio::fs::write(&temp, bytes).await?;
+    tokio::fs::rename(&temp, &path).await?;
+    Ok(())
+}
+
+/// Produce the tile derivative from one already stored, and write it.
+///
+/// Used at startup to fill in tiles for images stored before they existed, and
+/// after a fresh upload. Returns whether anything was written.
+pub fn ensure_tile(dir: &Path, hash: &str) -> std::io::Result<bool> {
+    if !name_is_valid(&format!("{hash}.webp")) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "not a stored image name",
+        ));
+    }
+    let tile = dir.join(format!("{hash}.tile.webp"));
+    if tile.exists() {
+        return Ok(false);
+    }
+
+    let full = std::fs::read(dir.join(format!("{hash}.webp")))?;
+    // Re-encoding a derivative of a derivative: the source is already ours, and
+    // the same decoder applies.
+    let decoded = match ImageReader::new(Cursor::new(&full))
+        .with_guessed_format()
+        .ok()
+        .and_then(|reader| reader.decode().ok())
+    {
+        Some(image) => image,
+        None => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "stored image is unreadable",
+            ));
+        }
+    };
+    let scaled = if decoded.width() > TILE_WIDTH {
+        decoded.resize(TILE_WIDTH, u32::MAX, image::imageops::FilterType::Lanczos3)
+    } else {
+        decoded
+    };
+    let bytes = encode_webp(&scaled).map_err(|_| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "could not encode the tile")
+    })?;
+
+    let temp = dir.join(format!("{hash}.tile.{}.part", std::process::id()));
+    std::fs::write(&temp, &bytes)?;
+    std::fs::rename(&temp, &tile)?;
+    Ok(true)
 }
 
 /// Accept only the names this module produces. A path, a traversal attempt or a
 /// different extension never reaches the filesystem.
 pub fn name_is_valid(name: &str) -> bool {
-    let Some(hash) = name.strip_suffix(".webp") else {
+    // `<hash>.webp` and `<hash>.tile.webp` are the only two names produced here.
+    let hash = name
+        .strip_suffix(".tile.webp")
+        .or_else(|| name.strip_suffix(".webp"));
+    let Some(hash) = hash else {
         return false;
     };
     hash.len() == 64
@@ -275,6 +341,56 @@ mod tests {
         source[16..20].copy_from_slice(&huge);
         source[20..24].copy_from_slice(&huge);
         assert_eq!(sanitise(&source), Err(ImageError::Undecodable));
+    }
+
+    /// Deterministic noise: unlike a gradient, it does not compress to almost
+    /// nothing, so scaling it down genuinely reduces the file.
+    fn noisy_png(width: u32, height: u32) -> Vec<u8> {
+        use image::{ExtendedColorType, ImageEncoder, Rgba, RgbaImage};
+        let mut image = RgbaImage::new(width, height);
+        let mut state: u32 = 0x9e37_79b9;
+        for pixel in image.pixels_mut() {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            *pixel = Rgba([
+                (state & 0xff) as u8,
+                ((state >> 8) & 0xff) as u8,
+                ((state >> 16) & 0xff) as u8,
+                255,
+            ]);
+        }
+        let mut out = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut out)
+            .write_image(image.as_raw(), width, height, ExtendedColorType::Rgba8)
+            .expect("encode");
+        out
+    }
+
+    #[tokio::test]
+    async fn a_tile_is_written_beside_the_full_size_and_is_smaller() {
+        let dir = tempfile::TempDir::new().expect("temp");
+        let image = sanitise(&noisy_png(1_200, 800)).expect("accepted");
+        save(dir.path(), &image).await.expect("save");
+        assert!(ensure_tile(dir.path(), &image.hash).expect("tile"));
+
+        let full = std::fs::read(dir.path().join(image.file_name())).expect("full");
+        let tile = std::fs::read(dir.path().join(image.tile_file_name())).expect("tile");
+        assert!(tile.len() < full.len(), "{} vs {}", tile.len(), full.len());
+
+        // 480 px wide, keeping the aspect ratio.
+        let decoded = ImageReader::new(Cursor::new(&tile))
+            .with_guessed_format()
+            .expect("format")
+            .decode()
+            .expect("decode");
+        assert_eq!(decoded.width(), TILE_WIDTH);
+        assert_eq!(decoded.height(), 320);
+
+        // Idempotent, and the tile name is servable.
+        assert!(!ensure_tile(dir.path(), &image.hash).expect("second run"));
+        assert!(name_is_valid(&image.tile_file_name()));
+        assert!(!name_is_valid(&format!("{}.tile.png", image.hash)));
     }
 
     #[test]

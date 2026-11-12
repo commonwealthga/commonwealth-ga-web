@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { submit, update } from '$lib/guides/api';
 	import type { Draft, Entry, OptionsResponse, UploadedImage } from '$lib/guides/types';
+	import MarkdownEditor from '$lib/components/MarkdownEditor.svelte';
 	import ImagePicker from './ImagePicker.svelte';
 
 	/**
@@ -220,19 +221,28 @@
 		</div>
 	{/if}
 
-	<label class="flex flex-col gap-1.5">
+	<div class="flex flex-col gap-1.5">
 		<span class="label text-dim">
 			{isBuild ? 'Description' : 'The guide'}
-			<span class="text-faint">({isBuild ? 'optional — suggested gear, how to play it' : 'Markdown'})</span>
+			<span class="text-faint">{isBuild ? '(optional — suggested gear, how to play it)' : ''}</span>
 		</span>
-		<textarea
-			class="min-h-40 border border-line/90 bg-panel/40 px-3 py-2 text-sm leading-relaxed text-ink placeholder:text-faint focus:border-ember/60 focus:outline-none"
-			bind:value={body}
-			maxlength={bodyLimit}
-			placeholder={isBuild ? 'What is this tree for? Gear, rotations, caveats.' : '## What it is\n\nStart writing…'}
-		></textarea>
-		<span class="label text-faint">{body.length} / {bodyLimit}</span>
-	</label>
+		{#if isBuild}
+			<textarea
+				class="min-h-40 border border-line/90 bg-panel/40 px-3 py-2 text-sm leading-relaxed text-ink placeholder:text-faint focus:border-ember/60 focus:outline-none"
+				bind:value={body}
+				maxlength={bodyLimit}
+				placeholder="What is this tree for? Gear, rotations, caveats."
+			></textarea>
+			<span class="label self-end text-faint">{body.length} / {bodyLimit}</span>
+		{:else}
+			<MarkdownEditor
+				bind:value={body}
+				maxlength={bodyLimit}
+				previewUrl="/api/guides/preview"
+				placeholder={'## What it is\n\nStart writing…'}
+			/>
+		{/if}
+	</div>
 
 	{#if isBuild}
 		<label class="flex flex-col gap-1.5">
@@ -248,14 +258,6 @@
 		</label>
 	{/if}
 
-	{#if options.formatting_help}
-		<details class="border border-line/60 bg-carbon/30 p-4">
-			<summary class="label cursor-pointer text-dim">Formatting</summary>
-			<p class="mt-2 whitespace-pre-line text-sm leading-relaxed text-faint">
-				{options.formatting_help}
-			</p>
-		</details>
-	{/if}
 
 	{#if problem}
 		<p class="panel-ticks border border-red/50 bg-carbon/40 p-4 text-sm text-red">{problem}</p>

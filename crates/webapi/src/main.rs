@@ -67,6 +67,24 @@ async fn main() -> anyhow::Result<()> {
         if let Err(err) = guides::store::migrate(site).await {
             tracing::warn!(error = %err, "could not prepare the guides tables");
         }
+        // Tiles arrived after the first builds were posted, so fill in the ones
+        // that predate them. Bounded: a handful per start, and a no-op once done.
+        match guides::store::image_hashes_missing_tiles(site, &cfg.images_dir, 50).await {
+            Ok(hashes) if !hashes.is_empty() => {
+                let dir = cfg.images_dir.clone();
+                let made = tokio::task::spawn_blocking(move || {
+                    hashes
+                        .iter()
+                        .filter(|hash| guides::images::ensure_tile(&dir, hash).unwrap_or(false))
+                        .count()
+                })
+                .await
+                .unwrap_or(0);
+                tracing::info!(count = made, "generated missing build image tiles");
+            }
+            Ok(_) => {}
+            Err(err) => tracing::warn!(error = %err, "could not check for missing image tiles"),
+        }
     }
 
     if let Some(path) = &cfg.status_override {
