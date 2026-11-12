@@ -16,6 +16,12 @@ export default defineConfig({
 			'/api': {
 				target: apiTarget,
 				changeOrigin: false
+			},
+			// Build screenshots are stored and served by the API process — the
+			// same paths the edge routes there in production.
+			'/images': {
+				target: apiTarget,
+				changeOrigin: false
 			}
 		}
 	}

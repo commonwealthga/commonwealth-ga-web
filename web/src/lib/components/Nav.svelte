@@ -14,6 +14,9 @@
 		{ href: '/events', label: 'Events' },
 		{ href: '/agents', label: 'Agents' },
 		{ href: '/missions', label: 'Missions' },
+		// Guides and builds share one menu entry: /guides is the default view and
+		// links to /builds, the way /agents leads to /leaderboard.
+		{ href: '/guides', label: 'Guides' },
 		{ href: '/news', label: 'News' }
 	];
 

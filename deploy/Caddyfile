@@ -36,6 +36,10 @@
 	handle /files/* {
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}
+	# Sanitised build screenshots: stored by the API, so served by it too.
+	handle /images/* {
+		reverse_proxy {$API_UPSTREAM:api:8080}
+	}
 	handle /db-export* {
 		reverse_proxy {$API_UPSTREAM:api:8080}
 	}

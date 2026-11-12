@@ -102,6 +102,9 @@ pub struct EntryView {
     pub discord_url: Option<String>,
     /// Set for builds: `/images/<hash>.webp`, the sanitiser's output.
     pub image_url: Option<String>,
+    /// The stored image's id, so an edit that does not replace the screenshot
+    /// can send the one it already has.
+    pub image_id: Option<i64>,
     pub author: String,
     pub created_at: i64,
     pub thumbs_up: i64,
@@ -149,6 +152,7 @@ impl EntryView {
                 .image_hash
                 .as_ref()
                 .map(|hash| format!("/images/{hash}.webp")),
+            image_id: entry.image_id,
             author: entry.author_name.clone(),
             created_at: entry.created_at,
             thumbs_up: entry.thumbs_up,
