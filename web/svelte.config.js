@@ -29,7 +29,7 @@ const config = {
 		prerender: {
 			// Reached only from the server-rendered news feed, so the build-time
 			// crawl from `/` does not find them.
-			entries: ['*', '/news/submit', '/news/queue'],
+			entries: ['*', '/news/submit'],
 			// Pages are crawled at build time, when there is no API to answer for
 			// them. The API is a runtime surface, not part of the static build.
 			handleHttpError: ({ path, message }) => {

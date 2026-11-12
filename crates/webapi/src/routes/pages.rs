@@ -23,7 +23,20 @@ pub async fn feed(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Api
     let site = site_pool(&state)?;
     let viewer = viewer(&state, &headers).await?;
 
-    let posts = store::feed(site, 50, 0).await.map_err(internal)?;
+    let approved = store::feed(site, 50, 0).await.map_err(internal)?;
+
+    // Pending means different things to different readers: the whole queue for a
+    // moderator, and only their own submissions for anyone else. Both are read
+    // here so the feed is the one place moderation happens.
+    let pending = if viewer.roles.moderator {
+        store::pending(site).await.map_err(internal)?
+    } else if let Some(session) = viewer.session.as_ref() {
+        store::pending_by_author(site, session.user_id)
+            .await
+            .map_err(internal)?
+    } else {
+        Vec::new()
+    };
     let verdict = match &viewer.session {
         None => Err(access::Denial::Anonymous),
         Some(_) => access::may_post(state.cfg.news_posting_mode, viewer.roles),
@@ -40,13 +53,13 @@ pub async fn feed(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Api
         signed_in_as: viewer.session.as_ref().map(|s| s.username.as_str()),
         status: chip.as_deref(),
     };
-    let html = pages::feed(
-        &posts,
-        &hint,
-        &chrome,
-        &state.stylesheets,
-        &state.cfg.site_url,
-    );
+    let data = pages::FeedData {
+        approved: &approved,
+        pending: &pending,
+        moderator: viewer.roles.moderator,
+        hint,
+    };
+    let html = pages::feed(&data, &chrome, &state.stylesheets, &state.cfg.site_url);
     Ok(html_response(html))
 }
 

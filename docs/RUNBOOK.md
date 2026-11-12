@@ -188,8 +188,10 @@ sqlite3 ~/games/server.db "SELECT u.username, r.role FROM ga_user_roles r
   JOIN ga_users u ON u.id = r.user_id ORDER BY r.role;"
 ```
 
-Then the moderator works at `https://commonwealth.ydns.eu/news/queue`: approve is
-one click, reject demands a note. Every decision is written to `news_audit`.
+Then the moderator works on `https://commonwealth.ydns.eu/news` itself: the queue
+is the first section on the feed, approve is one click, reject demands a note.
+Every decision is written to `news_audit`. Authors see their own pending posts in
+the same feed, marked "Waiting for review".
 
 **Reading a rejected post** — the content is kept on purpose:
 

@@ -286,13 +286,19 @@ pub struct PostingHint {
     pub reason: Option<String>,
 }
 
-pub fn feed(
-    posts: &[Post],
-    hint: &PostingHint,
-    chrome: &Chrome,
-    stylesheets: &[String],
-    base: &str,
-) -> String {
+/// What the feed page shows. `pending` means two different things depending on
+/// who is reading: the whole queue for a moderator, or only the reader's own
+/// submissions for everyone else.
+pub struct FeedData<'a> {
+    pub approved: &'a [Post],
+    pub pending: &'a [Post],
+    pub moderator: bool,
+    pub hint: PostingHint,
+}
+
+pub fn feed(data: &FeedData, chrome: &Chrome, stylesheets: &[String], base: &str) -> String {
+    let posts = data.approved;
+    let hint = &data.hint;
     let canonical = format!("{base}/news");
     let description =
         "News, guides, server updates and videos from the Commonwealth Global Agenda community.";
@@ -306,12 +312,31 @@ pub fn feed(
 
     body.push_str(&posting_box(hint));
 
-    if posts.is_empty() {
-        body.push_str(
-            "<p class=\"mt-10 border border-line/60 bg-carbon/40 p-6 text-sm text-dim\">Nothing published yet. The first post could be yours.</p>",
-        );
+    if data.moderator && !data.pending.is_empty() {
+        body.push_str(&review_queue(data.pending));
+    }
+
+    // A reader's own unpublished work belongs in the feed, marked, rather than
+    // only in a page they would have to know about.
+    let own_pending: &[Post] = if data.moderator { &[] } else { data.pending };
+
+    if posts.is_empty() && own_pending.is_empty() {
+        // A moderator looking at their own queue is not looking at an empty
+        // feed; saying "nothing published yet" under a queue of work reads as a
+        // bug.
+        let message = if data.moderator && !data.pending.is_empty() {
+            "Nothing published yet — the queue above is waiting for your review."
+        } else {
+            "Nothing published yet. The first post could be yours."
+        };
+        body.push_str(&format!(
+            "<p class=\"mt-10 border border-line/60 bg-carbon/40 p-6 text-sm text-dim\">{message}</p>"
+        ));
     } else {
         body.push_str("<ul class=\"mt-10 flex flex-col gap-3\">");
+        for post in own_pending {
+            body.push_str(&awaiting_card(post));
+        }
         for post in posts {
             body.push_str(&card(post));
         }
@@ -353,6 +378,111 @@ fn posting_box(hint: &PostingHint) -> String {
     format!(
         "<div class=\"mt-8 border border-line/60 bg-carbon/40 p-4 text-sm text-dim\">{}{action}</div>",
         escape(reason)
+    )
+}
+
+/// The queue, on the page a moderator is already looking at.
+fn review_queue(pending: &[Post]) -> String {
+    let mut items = String::new();
+    for post in pending {
+        let path = escape(&post.path());
+        items.push_str(&format!(
+            "<li data-pending=\"{id}\" class=\"border border-amber/40 bg-carbon/40\">\
+<div class=\"flex flex-col gap-3 p-5\">\
+<div class=\"flex flex-wrap items-center gap-3\">\
+<span class=\"label border border-amber/50 px-1.5 py-0.5 text-amber\">{kind}</span>\
+<span class=\"label text-faint\">{date}</span>\
+<span class=\"label text-faint\">{author}</span>\
+</div>\
+<h2 class=\"heading text-xl text-ink\"><a class=\"hover:text-amber\" href=\"{path}\" target=\"_blank\" rel=\"noopener\">{title}</a></h2>\
+<div class=\"prose-news flex flex-col gap-3 border-y border-line/50 py-3 text-sm leading-relaxed text-dim\">{html}</div>\
+<label class=\"flex flex-col gap-1.5\">\
+<span class=\"label text-faint\">Note (required to reject)</span>\
+<textarea data-note rows=\"2\" placeholder=\"What is wrong with it?\" class=\"w-full border border-line/70 bg-void/60 px-3 py-2 text-sm text-ink\"></textarea>\
+</label>\
+<p data-message class=\"hidden text-sm text-ember\"></p>\
+<div class=\"flex flex-wrap items-center gap-3\">\
+<button type=\"button\" data-action=\"approve\" class=\"heading border border-ember/60 px-4 py-2 text-sm tracking-[0.1em] text-ember transition-colors hover:bg-ember hover:text-void\">Approve</button>\
+<button type=\"button\" data-action=\"reject\" class=\"heading border border-line/70 px-4 py-2 text-sm tracking-[0.1em] text-dim transition-colors hover:border-red/60 hover:text-ink\">Reject</button>\
+</div>\
+</div></li>",
+            id = post.id,
+            kind = escape(post.kind.label()),
+            date = escape(&iso_date(post.created_at)),
+            author = escape(&post.author_name),
+            title = escape(&post.title),
+            html = post.body_html,
+        ));
+    }
+
+    format!(
+        "<section class=\"mt-10\">\
+<div class=\"flex flex-wrap items-baseline gap-3\">\
+<h2 class=\"heading text-2xl text-ink\">Waiting for review</h2>\
+<span class=\"label text-amber\">{count} pending</span>\
+</div>\
+<p class=\"mt-1 text-sm text-dim\">Only moderators see this section. Approving publishes immediately; rejecting needs a note and hides the post everywhere.</p>\
+<ul class=\"mt-4 flex flex-col gap-3\">{items}</ul>\
+</section>\
+<script>\
+(function() {{\
+  document.querySelectorAll('[data-pending]').forEach(function (card) {{\
+    var note = card.querySelector('[data-note]');\
+    var message = card.querySelector('[data-message]');\
+    function say(text) {{ message.textContent = text; message.classList.remove('hidden'); }}\
+    card.querySelectorAll('[data-action]').forEach(function (button) {{\
+      button.addEventListener('click', function () {{\
+        var action = button.dataset.action;\
+        var value = (note.value || '').trim();\
+        if (action === 'reject' && !value) {{\
+          say('A note is required to reject: say what was wrong with it.');\
+          note.focus();\
+          return;\
+        }}\
+        card.querySelectorAll('button').forEach(function (b) {{ b.disabled = true; }});\
+        fetch('/api/news/' + card.dataset.pending + '/' + action, {{\
+          method: 'POST', credentials: 'same-origin',\
+          headers: {{ 'Content-Type': 'application/json' }},\
+          body: JSON.stringify({{ note: value }})\
+        }}).then(function (response) {{\
+          if (!response.ok) {{\
+            return response.json().catch(function () {{ return {{}}; }}).then(function (data) {{\
+              throw new Error(data.error || ('failed (' + response.status + ')'));\
+            }});\
+          }}\
+          // The page is server-rendered: reload so the feed reflects the decision.\
+          window.location.reload();\
+        }}).catch(function (error) {{\
+          card.querySelectorAll('button').forEach(function (b) {{ b.disabled = false; }});\
+          say(error.message);\
+        }});\
+      }});\
+    }});\
+  }});\
+}})();\
+</script>",
+        count = pending.len(),
+        items = items,
+    )
+}
+
+/// The reader's own unpublished post, in the feed with an honest label.
+fn awaiting_card(post: &Post) -> String {
+    let path = escape(&post.path());
+    format!(
+        "<li class=\"border border-amber/40 bg-carbon/40\">\
+<a class=\"block p-5\" href=\"{path}\">\
+<div class=\"flex flex-wrap items-center gap-3\">\
+<span class=\"label border border-line/70 px-1.5 py-0.5 text-faint\">{kind}</span>\
+<span class=\"label border border-amber/50 px-1.5 py-0.5 text-amber\">Waiting for review</span>\
+<span class=\"label text-faint\">{date}</span>\
+</div>\
+<h2 class=\"heading mt-2 text-xl text-ink\">{title}</h2>\
+<p class=\"mt-1 text-sm text-dim\">Only you (and a moderator) can see this until it is approved.</p>\
+</a></li>",
+        kind = escape(post.kind.label()),
+        date = escape(&iso_date(post.created_at)),
+        title = escape(&post.title),
     )
 }
 
@@ -655,6 +785,18 @@ mod tests {
         }
     }
 
+    /// A feed page with no pending posts and no moderator, for the tests that
+    /// are about the posts themselves.
+    fn feed_page(posts: &[Post], hint: PostingHint, chrome: &Chrome) -> String {
+        let data = FeedData {
+            approved: posts,
+            pending: &[],
+            moderator: false,
+            hint,
+        };
+        feed(&data, chrome, &styles(), "https://example.test")
+    }
+
     fn styles() -> Vec<String> {
         vec!["/_app/immutable/assets/0.css".to_string()]
     }
@@ -749,13 +891,7 @@ mod tests {
             may_post: false,
             reason: Some("Sign in with your game account to submit a post.".to_string()),
         };
-        let page = feed(
-            &[sample_post()],
-            &hint,
-            &Chrome::default(),
-            &styles(),
-            "https://example.test",
-        );
+        let page = feed_page(&[sample_post()], hint, &Chrome::default());
         assert!(page.contains("href=\"/news/12-solo-the-surfside-bunker-script\""));
         assert!(page.contains("Guide"));
         assert!(page.contains("Sign in"), "the reason is shown");
@@ -770,13 +906,7 @@ mod tests {
             may_post: true,
             reason: None,
         };
-        let page = feed(
-            &[sample_post()],
-            &hint,
-            &Chrome::default(),
-            &styles(),
-            "https://example.test",
-        );
+        let page = feed_page(&[sample_post()], hint, &Chrome::default());
         assert!(page.contains("Write a post"), "{page}");
         assert!(page.contains("href=\"/news/submit\""));
     }
@@ -789,14 +919,110 @@ mod tests {
             may_post: true,
             reason: None,
         };
-        let page = feed(
-            &[],
-            &hint,
-            &Chrome::default(),
-            &styles(),
-            "https://example.test",
-        );
+        let page = feed_page(&[], hint, &Chrome::default());
         assert!(page.contains("Nothing published yet"), "{page}");
+    }
+
+    fn pending_post() -> Post {
+        let mut post = sample_post();
+        post.status = Status::Pending;
+        post.title = "Awaiting a decision".to_string();
+        post.slug = "awaiting-a-decision".to_string();
+        post
+    }
+
+    #[test]
+    fn a_moderator_sees_the_queue_on_the_feed_with_its_controls() {
+        let queue = [pending_post()];
+        let data = FeedData {
+            approved: &[],
+            pending: &queue,
+            moderator: true,
+            hint: hint(),
+        };
+        let page = feed(&data, &Chrome::default(), &styles(), "https://example.test");
+
+        assert!(
+            page.contains("Waiting for review"),
+            "the section is on the feed"
+        );
+        assert!(page.contains("1 pending"));
+        assert!(page.contains("Awaiting a decision"), "the post itself");
+        assert!(
+            page.contains("<h2>Prep</h2>"),
+            "with its rendered body to judge"
+        );
+        assert!(page.contains("data-action=\"approve\""), "{page}");
+        assert!(page.contains("data-action=\"reject\""));
+        assert!(
+            page.contains("data-note"),
+            "a rejection needs somewhere to write the reason"
+        );
+        // The empty-feed line knows about the queue rather than contradicting it.
+        assert!(
+            page.contains("the queue above is waiting for your review"),
+            "{page}"
+        );
+        assert!(!page.contains("The first post could be yours."));
+    }
+
+    #[test]
+    fn a_reader_sees_their_own_pending_post_marked_as_waiting() {
+        let mine = [pending_post()];
+        let data = FeedData {
+            approved: &[],
+            pending: &mine,
+            moderator: false,
+            hint: hint(),
+        };
+        let page = feed(&data, &Chrome::default(), &styles(), "https://example.test");
+
+        assert!(
+            page.contains("Awaiting a decision"),
+            "their own post is visible"
+        );
+        assert!(page.contains("Waiting for review"), "and labelled");
+        assert!(
+            page.contains("Only you (and a moderator) can see this"),
+            "with the reason it is not public"
+        );
+        assert!(
+            !page.contains("data-action=\"approve\""),
+            "an author must not approve their own post: {page}"
+        );
+        assert!(!page.contains("data-note"));
+    }
+
+    #[test]
+    fn a_reader_with_nothing_pending_sees_no_queue_and_no_notices() {
+        let data = FeedData {
+            approved: &[sample_post()],
+            pending: &[],
+            moderator: false,
+            hint: hint(),
+        };
+        let page = feed(&data, &Chrome::default(), &styles(), "https://example.test");
+        assert!(!page.contains("Waiting for review"));
+        assert!(!page.contains("data-action"));
+        assert!(page.contains("solo-the-surfside-bunker-script"));
+    }
+
+    #[test]
+    fn the_queue_escapes_what_it_renders() {
+        let mut post = pending_post();
+        post.title = "<img src=x onerror=alert(1)>".to_string();
+        post.author_name = "\"quoted\"".to_string();
+        let queue = [post];
+        let data = FeedData {
+            approved: &[],
+            pending: &queue,
+            moderator: true,
+            hint: hint(),
+        };
+        let page = feed(&data, &Chrome::default(), &styles(), "https://example.test");
+        assert!(!page.contains("<img src=x"), "{page}");
+        assert!(page.contains("&lt;img src=x"));
+        assert!(page.contains("&quot;quoted&quot;"));
     }
 
     #[test]
@@ -839,13 +1065,7 @@ mod tests {
             signed_in_as: Some("Agent07"),
             status: None,
         };
-        let page = feed(
-            &[sample_post()],
-            &hint(),
-            &signed_in,
-            &styles(),
-            "https://example.test",
-        );
+        let page = feed_page(&[sample_post()], hint(), &signed_in);
         assert!(
             page.contains("Agent07"),
             "the account name is in the header"
@@ -866,13 +1086,7 @@ mod tests {
             "a signed-in reader is not offered sign-in: {header}"
         );
 
-        let anonymous = feed(
-            &[sample_post()],
-            &hint(),
-            &Chrome::default(),
-            &styles(),
-            "https://example.test",
-        );
+        let anonymous = feed_page(&[sample_post()], hint(), &Chrome::default());
         let anonymous_header = anonymous
             .split("<header")
             .nth(1)
@@ -887,7 +1101,7 @@ mod tests {
             signed_in_as: None,
             status: Some("3 agents in-game"),
         };
-        let page = feed(&[], &hint(), &live, &styles(), "https://example.test");
+        let page = feed_page(&[], hint(), &live);
         assert!(
             page.contains("3 agents in-game"),
             "the chip says what the server knows"
@@ -897,13 +1111,7 @@ mod tests {
             "and links to the status page"
         );
 
-        let unknown = feed(
-            &[],
-            &hint(),
-            &Chrome::default(),
-            &styles(),
-            "https://example.test",
-        );
+        let unknown = feed_page(&[], hint(), &Chrome::default());
         assert!(
             unknown.contains("linking"),
             "no status yet renders the placeholder, not a wrong count"
@@ -914,13 +1122,7 @@ mod tests {
     fn the_chrome_is_the_sites_chrome_not_a_plainer_one() {
         // What was missing when the page first shipped: the sigil, the tagline,
         // the backdrop and the footer's third column.
-        let page = feed(
-            &[],
-            &hint(),
-            &Chrome::default(),
-            &styles(),
-            "https://example.test",
-        );
+        let page = feed_page(&[], hint(), &Chrome::default());
         assert!(page.contains(HEX_MARK_OUTER), "the hex mark: {page}");
         assert!(
             page.contains("Global Agenda community server"),

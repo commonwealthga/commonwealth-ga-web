@@ -324,6 +324,142 @@ async fn the_sitemap_survives_without_a_site_database() {
 }
 
 #[tokio::test]
+async fn a_moderator_moderates_on_the_feed_itself() {
+    let harness = Harness::new().await;
+    let entry = webapi::news::validate("news", "Waiting here", "", "Body", None).expect("valid");
+    let pending = store::create(&harness.site, 7, "Agent07", &entry, 1_764_000_000)
+        .await
+        .expect("create");
+
+    // A moderator grant in the game database, read-only from here.
+    let live_path = harness.path("server.db");
+    let writer = db::open_read_write(&live_path, 1).await.expect("live");
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ga_user_roles (
+             id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+             role TEXT NOT NULL, granted_at INTEGER NOT NULL DEFAULT 0,
+             UNIQUE(user_id, role))",
+    )
+    .execute(&writer)
+    .await
+    .expect("schema");
+    sqlx::query("INSERT INTO ga_user_roles (user_id, role) VALUES (1, 'news_moderator')")
+        .execute(&writer)
+        .await
+        .expect("grant");
+    writer.close().await;
+
+    let live = db::open_read_only(&live_path, 1).await.expect("pool");
+    let cfg = Config {
+        bind: "127.0.0.1:0".parse().expect("addr"),
+        live_db: Some(live_path.clone()),
+        snapshot_db: None,
+        site_db: Some(harness.path("site.db")),
+        static_dir: harness.path("static"),
+        files_dir: harness.path("static"),
+        status_ttl: Duration::from_secs(60),
+        live_tick: Duration::from_secs(15),
+        match_ttl: Duration::from_secs(30),
+        history_ttl: Duration::from_secs(3600),
+        status_override: None,
+        control_api_url: None,
+        control_api_token: None,
+        db_export_token: None,
+        site_url: "https://example.test".to_string(),
+        news_posting_mode: PostingMode::Open,
+    };
+    let app = app(AppState::new(
+        cfg,
+        Some(live),
+        None,
+        Some(harness.site.clone()),
+    ));
+
+    let moderator = auth::create_session(&harness.site, 1, "ModOne")
+        .await
+        .expect("session");
+    let (status, _, html) = get(&app, "/news", Some(&moderator)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("Waiting for review"), "{html}");
+    assert!(
+        html.contains("Waiting here"),
+        "the pending post is on the feed"
+    );
+    assert!(
+        html.contains(&format!("data-pending=\"{pending}\"")),
+        "{html}"
+    );
+    assert!(
+        html.contains("data-action=\"approve\""),
+        "with controls: {html}"
+    );
+
+    // A stranger sees none of it.
+    let (status, _, html) = get(&app, "/news", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        !html.contains("Waiting here"),
+        "not published, not public: {html}"
+    );
+    assert!(!html.contains("data-action"));
+}
+
+#[tokio::test]
+async fn an_author_sees_their_own_pending_post_on_the_feed() {
+    let harness = Harness::new().await;
+    let entry =
+        webapi::news::validate("guide", "My draft", "A summary", "Body", None).expect("valid");
+    store::create(&harness.site, 7, "Agent07", &entry, 1_764_000_000)
+        .await
+        .expect("create");
+    let app = harness.router();
+
+    let author = auth::create_session(&harness.site, 7, "Agent07")
+        .await
+        .expect("session");
+    let (status, _, html) = get(&app, "/news", Some(&author)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("My draft"), "their pending post is visible");
+    assert!(html.contains("Waiting for review"), "and labelled as such");
+    assert!(
+        !html.contains("data-action=\"approve\""),
+        "but they cannot approve it themselves: {html}"
+    );
+
+    // Someone else's feed does not show it.
+    let other = auth::create_session(&harness.site, 8, "Agent08")
+        .await
+        .expect("session");
+    let (_, _, html) = get(&app, "/news", Some(&other)).await;
+    assert!(!html.contains("My draft"), "{html}");
+}
+
+#[tokio::test]
+async fn a_rejected_post_is_on_nobody_s_feed() {
+    let harness = Harness::new().await;
+    let entry = webapi::news::validate("news", "Removed post", "", "Body", None).expect("valid");
+    let id = store::create(&harness.site, 7, "Agent07", &entry, 1_764_000_000)
+        .await
+        .expect("create");
+    store::reject(&harness.site, id, 1, "ModOne", "spam", 1_764_000_100)
+        .await
+        .expect("reject");
+    let app = harness.router();
+
+    let author = auth::create_session(&harness.site, 7, "Agent07")
+        .await
+        .expect("session");
+    for cookie in [None, Some(&author)] {
+        let (_, _, html) = get(&app, "/news", cookie.map(String::as_str)).await;
+        assert!(
+            !html.contains("Removed post"),
+            "rejected is invisible: {html}"
+        );
+        assert!(!html.contains("Waiting for review"));
+    }
+}
+
+#[tokio::test]
 async fn the_queue_page_is_moderator_only() {
     let harness = Harness::new().await;
     let entry = webapi::news::validate("news", "In review", "", "Body", None).expect("valid");

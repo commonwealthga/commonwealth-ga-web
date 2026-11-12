@@ -226,12 +226,19 @@ deliberately holds no admin token.
 
 | Role | Effect |
 |---|---|
-| `news_moderator` | Sees `/news/queue`; may approve and reject |
+| `news_moderator` | Sees the review queue on `/news`; may approve and reject there |
 | `news_restricted` | May not submit, whatever the posting mode |
 | `news_allowlisted` | May submit while `WEB_NEWS_POSTING_MODE=allowlisted` |
 
 Closing posting to everyone but an allowlist is a repository variable change
 (`WEB_NEWS_POSTING_MODE=allowlisted`) plus a deploy — see the RUNBOOK.
+
+**Moderation happens on the feed.** `/news` renders the pending queue at the top
+for anyone with `news_moderator`, with the post's rendered body, an approve
+button and a reject button that will not fire without a note. There is no
+separate admin page to remember. An author sees their own unpublished posts in
+the same feed, labelled `Waiting for review` — they are the only other person who
+can see them.
 
 **Rejection is the soft delete.** The row keeps its body, author, Markdown and
 the moderator's note; it disappears from the feed, the queue, the author's own
