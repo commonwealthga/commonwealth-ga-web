@@ -324,7 +324,7 @@ pub fn validate(
 }
 
 /// One line, whitespace collapsed, control characters refused.
-fn normalise_line(value: &str) -> Option<String> {
+pub(crate) fn normalise_line(value: &str) -> Option<String> {
     let mut out = String::with_capacity(value.len());
     let mut pending_space = false;
     for ch in value.chars() {
@@ -347,13 +347,13 @@ fn normalise_line(value: &str) -> Option<String> {
     Some(out)
 }
 
-fn is_https(value: &str) -> bool {
+pub(crate) fn is_https(value: &str) -> bool {
     let lowered = value.to_ascii_lowercase();
     lowered.starts_with("https://") && lowered.len() > "https://".len()
 }
 
 /// `https://example.org/a?b` -> checked, lowercased host.
-fn host_of(url: &str) -> Option<String> {
+pub(crate) fn host_of(url: &str) -> Option<String> {
     let rest = url.split_once("://")?.1;
     let host = rest.split(['/', '?', '#']).next()?;
     let host = host.rsplit('@').next()?; // drop userinfo

@@ -97,6 +97,7 @@ impl Harness {
             snapshot_db: None,
             site_db: None,
             files_dir: self.path("static"),
+            images_dir: self.path("static"),
             status_ttl: Duration::from_secs(60),
             live_tick: Duration::from_secs(15),
             match_ttl: Duration::from_secs(30),

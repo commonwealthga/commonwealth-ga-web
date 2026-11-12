@@ -23,6 +23,10 @@ tower.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
 
 [dev-dependencies]
 tempfile = "3"
+# The guides tests construct a real screenshot to upload, so the pipeline is
+# exercised against actual bytes rather than a mock.
+image = { workspace = true }

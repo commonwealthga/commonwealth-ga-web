@@ -162,6 +162,7 @@ impl Harness {
                 snapshot_db: None,
                 site_db: None,
                 files_dir: self.path("files"),
+                images_dir: self.path("files"),
                 status_ttl: std::time::Duration::from_secs(0),
                 live_tick: std::time::Duration::from_secs(15),
                 match_ttl: std::time::Duration::from_secs(0),

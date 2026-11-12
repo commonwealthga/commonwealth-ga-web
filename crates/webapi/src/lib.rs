@@ -11,6 +11,7 @@ pub mod db;
 pub mod error;
 pub mod export;
 pub mod files;
+pub mod guides;
 pub mod history;
 pub mod match_detail;
 pub mod matches;
@@ -177,6 +178,13 @@ pub fn app(state: Arc<AppState>) -> Router {
         // served verbatim, straight from disk, with no restart needed when files
         // are added or replaced.
         .nest_service("/files", files::service(state.cfg.files_dir.clone()))
+        // Sanitised build screenshots, content-addressed. Nothing here was ever
+        // uploaded in the form it is served: the route reads derivatives this
+        // process re-encoded itself.
+        .route(
+            "/images/{name}",
+            axum::routing::get(routes::guides::serve_image),
+        )
         // The redacted database, at the root because that is where third parties
         // already look for it (the previous site used the same URL).
         .route("/db-export/{token}", axum::routing::get(export::download))

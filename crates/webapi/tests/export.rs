@@ -57,6 +57,7 @@ impl Harness {
             snapshot_db: Some(snapshot_path),
             site_db: None,
             files_dir: self.path("files"),
+            images_dir: self.path("files"),
             status_ttl: Duration::from_secs(0),
             live_tick: Duration::from_secs(15),
             match_ttl: Duration::from_secs(0),

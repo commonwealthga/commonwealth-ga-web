@@ -20,6 +20,7 @@ async fn harness(dir: &TempDir) -> (axum::Router, PathBuf) {
         snapshot_db: None,
         site_db: None,
         files_dir: files.clone(),
+        images_dir: files.clone(),
         status_ttl: std::time::Duration::from_secs(60),
         live_tick: std::time::Duration::from_secs(15),
         match_ttl: std::time::Duration::from_secs(30),

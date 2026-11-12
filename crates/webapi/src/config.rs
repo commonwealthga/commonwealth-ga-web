@@ -24,6 +24,9 @@ pub struct Config {
     /// launcher fetches. Read from disk per request so files can be added or
     /// replaced without a restart.
     pub files_dir: PathBuf,
+    /// Where sanitised build screenshots live, one `<hash>.webp` each. Written
+    /// only by the image pipeline, and served from here and nowhere else.
+    pub images_dir: PathBuf,
     /// How long a player count may be reused before the DB is queried again.
     pub status_ttl: Duration,
     /// How often the status is recomputed and pushed to `/api/live` clients.
@@ -87,6 +90,8 @@ impl Config {
             snapshot_db: env_path("WEB_DB_SNAPSHOT"),
             site_db,
             files_dir: crate::files::resolve_dir(env_path("WEB_FILES_DIR")),
+            images_dir: env_path("WEB_IMAGES_DIR")
+                .unwrap_or_else(|| PathBuf::from("site-data/images")),
             status_ttl: env_duration("WEB_STATUS_TTL_SECS", 60),
             live_tick: env_duration("WEB_LIVE_TICK_SECS", 15),
             match_ttl: env_duration("WEB_MATCH_TTL_SECS", 30),

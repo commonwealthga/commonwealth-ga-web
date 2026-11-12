@@ -28,6 +28,7 @@ async fn activity(State(state): State<Arc<AppState>>) -> Response {
     }
 }
 pub mod auth;
+pub mod guides;
 pub mod history;
 pub mod matches;
 pub mod news;
@@ -38,6 +39,7 @@ pub mod status;
 use std::sync::Arc;
 
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 
 use crate::AppState;
@@ -63,6 +65,23 @@ pub fn api() -> Router<Arc<AppState>> {
         .route("/news/{id}/unapprove", post(news::unapprove))
         .route("/news/{id}/note", post(news::note))
         .route("/news/{id}/thumb", post(news::thumb))
+        // Guides and builds: two categories, one moderation queue, one shape.
+        .route("/guides", get(guides::feed).post(guides::submit))
+        .route("/guides/options", get(guides::options))
+        // The body *is* the image; the default 2 MB body limit is raised to the
+        // upload cap so a legitimate screenshot is not refused as too large.
+        .route(
+            "/guides/images",
+            post(guides::upload).layer(DefaultBodyLimit::max(
+                crate::guides::images::MAX_UPLOAD_BYTES,
+            )),
+        )
+        .route("/guides/{id}", get(guides::detail).patch(guides::update))
+        .route("/guides/{id}/approve", post(guides::approve))
+        .route("/guides/{id}/reject", post(guides::reject))
+        .route("/guides/{id}/unapprove", post(guides::unapprove))
+        .route("/guides/{id}/note", post(guides::note))
+        .route("/guides/{id}/thumb", post(guides::thumb))
         // Newest completed missions, for the public archive.
         .route("/matches/recent", get(matches::recent))
         // One match in full: scoreboard, and the PvP rating context.

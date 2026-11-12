@@ -25,6 +25,7 @@ fn router(dir: &TempDir) -> Router {
         live_db: None,
         snapshot_db: None,
         site_db: None,
+        images_dir: dir.path().join("images"),
         files_dir: files,
         status_ttl: Duration::from_secs(0),
         live_tick: Duration::from_secs(15),
