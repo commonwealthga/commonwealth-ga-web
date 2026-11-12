@@ -5,6 +5,7 @@ use anyhow::Context;
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
 use webapi::config::Config;
+use webapi::news;
 use webapi::snapshot::Snapshot;
 use webapi::status::StatusPayload;
 use webapi::{AppState, DEFAULT_ACTIVITY_DAYS, app, auth, db};
@@ -54,9 +55,13 @@ async fn main() -> anyhow::Result<()> {
         None => None,
     };
     if let Some(site) = &site_pool {
-        // Website-owned schema only: sign-in sessions. The game DB is never written.
+        // Website-owned schema only: sign-in sessions and the news tables. The
+        // game DB is never written.
         if let Err(err) = auth::migrate(site).await {
             tracing::warn!(error = %err, "could not prepare the session table");
+        }
+        if let Err(err) = news::store::migrate(site).await {
+            tracing::warn!(error = %err, "could not prepare the news tables");
         }
     }
 
