@@ -37,3 +37,6 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run check
       - run: npm run build
+      # The news pages' interaction lives in a plain file so it can be checked:
+      # generated JavaScript is how the approve button stopped working.
+      - run: node --check static/news-admin.js

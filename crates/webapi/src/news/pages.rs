@@ -122,8 +122,9 @@ fn document(meta: &Meta, content: &str) -> String {
 <body class=\"min-h-screen bg-void text-ink\">\
 {backdrop}\
 {header}\
-<main class=\"mx-auto w-full max-w-4xl px-4 py-12 sm:px-6 sm:py-16\">{content}</main>\
+<main class=\"mx-auto w-full max-w-6xl px-4 py-12 sm:px-6 sm:py-16\">{content}</main>\
 {footer}\
+<script src=\"/news-admin.js\" defer></script>\
 </body>\
 </html>",
         header = header(meta.active, &account, meta.status),
@@ -423,44 +424,7 @@ fn review_queue(pending: &[Post]) -> String {
 </div>\
 <p class=\"mt-1 text-sm text-dim\">Only moderators see this section. Approving publishes immediately; rejecting needs a note and hides the post everywhere.</p>\
 <ul class=\"mt-4 flex flex-col gap-3\">{items}</ul>\
-</section>\
-<script>\
-(function() {{\
-  document.querySelectorAll('[data-pending]').forEach(function (card) {{\
-    var note = card.querySelector('[data-note]');\
-    var message = card.querySelector('[data-message]');\
-    function say(text) {{ message.textContent = text; message.classList.remove('hidden'); }}\
-    card.querySelectorAll('[data-action]').forEach(function (button) {{\
-      button.addEventListener('click', function () {{\
-        var action = button.dataset.action;\
-        var value = (note.value || '').trim();\
-        if (action === 'reject' && !value) {{\
-          say('A note is required to reject: say what was wrong with it.');\
-          note.focus();\
-          return;\
-        }}\
-        card.querySelectorAll('button').forEach(function (b) {{ b.disabled = true; }});\
-        fetch('/api/news/' + card.dataset.pending + '/' + action, {{\
-          method: 'POST', credentials: 'same-origin',\
-          headers: {{ 'Content-Type': 'application/json' }},\
-          body: JSON.stringify({{ note: value }})\
-        }}).then(function (response) {{\
-          if (!response.ok) {{\
-            return response.json().catch(function () {{ return {{}}; }}).then(function (data) {{\
-              throw new Error(data.error || ('failed (' + response.status + ')'));\
-            }});\
-          }}\
-          // The page is server-rendered: reload so the feed reflects the decision.\
-          window.location.reload();\
-        }}).catch(function (error) {{\
-          card.querySelectorAll('button').forEach(function (b) {{ b.disabled = false; }});\
-          say(error.message);\
-        }});\
-      }});\
-    }});\
-  }});\
-}})();\
-</script>",
+</section>",
         count = pending.len(),
         items = items,
     )
@@ -634,32 +598,8 @@ fn reactions(post: &Post, reacted: bool) -> String {
 class=\"heading flex items-center gap-2 border border-line/70 px-4 py-2 text-sm tracking-[0.1em] text-dim transition-colors hover:border-ember/60 hover:text-ink\">\
 <span aria-hidden=\"true\">👍</span><span id=\"thumb-count\">{count}</span>\
 </button>\
-<span class=\"label text-faint\">Sign in to react</span>\
-</div>\
-<script>\
-(function(){{\
-  var button = document.getElementById('thumb');\
-  if (!button) return;\
-  var count = document.getElementById('thumb-count');\
-  button.addEventListener('click', function() {{\
-    var active = button.dataset.active !== 'true';\
-    fetch('/api/news/{id}/thumb', {{\
-      method: 'POST', credentials: 'same-origin',\
-      headers: {{ 'Content-Type': 'application/json' }},\
-      body: JSON.stringify({{ active: active }})\
-    }}).then(function (response) {{\
-      if (!response.ok) throw new Error(String(response.status));\
-      return response.json();\
-    }}).then(function (data) {{\
-      count.textContent = String(data.thumbs_up);\
-      button.dataset.active = String(data.reacted);\
-      button.setAttribute('aria-pressed', String(data.reacted));\
-    }}).catch(function () {{\
-      button.title = 'Sign in with your game account to react.';\
-    }});\
-  }});\
-}})();\
-</script>",
+<span class=\"label text-faint\" id=\"thumb-note\"></span>\
+</div>",
         id = post.id,
         active = reacted,
         count = post.thumbs_up,
@@ -1023,6 +963,50 @@ mod tests {
         assert!(!page.contains("<img src=x"), "{page}");
         assert!(page.contains("&lt;img src=x"));
         assert!(page.contains("&quot;quoted&quot;"));
+    }
+
+    #[test]
+    fn no_javascript_is_generated_inside_the_rust_templates() {
+        // This is the bug that shipped: JavaScript built with `format!` had its
+        // braces mangled, the browser dropped the whole script on a syntax
+        // error, and the approve button did nothing at all. Every page now
+        // points at one checked file instead.
+        let queue = [pending_post()];
+        let data = FeedData {
+            approved: &[sample_post()],
+            pending: &queue,
+            moderator: true,
+            hint: hint(),
+        };
+        let pages = [
+            feed(&data, &Chrome::default(), &styles(), "https://example.test"),
+            post_page(
+                &sample_post(),
+                false,
+                false,
+                &Chrome::default(),
+                &styles(),
+                "https://example.test",
+            ),
+        ];
+
+        for page in pages {
+            assert!(
+                page.contains("<script src=\"/news-admin.js\" defer></script>"),
+                "every page loads the shared script"
+            );
+            // The only inline script allowed is structured data, which is JSON.
+            let inline: Vec<&str> = page
+                .split("<script>")
+                .skip(1)
+                .filter_map(|rest| rest.split("</script>").next())
+                .collect();
+            assert!(
+                inline.is_empty(),
+                "no inline behaviour scripts: found {:?}",
+                inline.first().map(|body| &body[..body.len().min(60)])
+            );
+        }
     }
 
     #[test]
