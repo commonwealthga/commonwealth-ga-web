@@ -71,6 +71,9 @@ pub struct Meta<'a> {
     /// Which nav entry is current.
     pub active: &'a str,
     pub signed_in_as: Option<&'a str>,
+    /// What the status chip says, e.g. "3 agents in-game". `None` renders the
+    /// same "linking" placeholder the Svelte chip shows before its feed arrives.
+    pub status: Option<&'a str>,
 }
 
 fn document(meta: &Meta, content: &str) -> String {
@@ -85,12 +88,15 @@ fn document(meta: &Meta, content: &str) -> String {
         links.push_str("\">");
     }
 
+    // `AccountLink.svelte`: signed in is an ember chip linking to /me, signed out
+    // is a plain bordered "Sign in". Same markup, so the two headers agree.
     let account = match meta.signed_in_as {
         Some(name) => format!(
-            "<a class=\"label text-dim transition-colors hover:text-ink\" href=\"/me\">{}</a>",
+            "<a href=\"/me\" title=\"Your player page\" class=\"label flex items-center gap-2 border border-ember/50 bg-ember/10 px-2.5 py-1.5 text-ember transition-colors hover:bg-ember/20\">\
+<span class=\"size-1 rounded-full bg-ember\"></span>{}</a>",
             escape(name)
         ),
-        None => "<a class=\"label text-dim transition-colors hover:text-ink\" href=\"/login\">Sign in</a>"
+        None => "<a href=\"/login\" class=\"label border border-line-hi px-2.5 py-1.5 text-dim transition-colors hover:border-ember/60 hover:text-ink\">Sign in</a>"
             .to_string(),
     };
 
@@ -114,18 +120,69 @@ fn document(meta: &Meta, content: &str) -> String {
 {head}\
 </head>\
 <body class=\"min-h-screen bg-void text-ink\">\
+{backdrop}\
 {header}\
 <main class=\"mx-auto w-full max-w-4xl px-4 py-12 sm:px-6 sm:py-16\">{content}</main>\
 {footer}\
 </body>\
 </html>",
-        header = header(meta.active, &account),
-        footer = footer(meta.site_url),
+        header = header(meta.active, &account, meta.status),
+        footer = footer(meta.site_url, meta.signed_in_as.is_some()),
+        backdrop = backdrop(),
         head = meta.head,
     )
 }
 
-fn header(active: &str, account: &str) -> String {
+const HEX_MARK_INNER: &str =
+    "22.00,13.00 29.79,17.50 29.79,26.50 22.00,31.00 14.21,26.50 14.21,17.50";
+const HEX_MARK_OUTER: &str = "22.00,4.00 37.59,13.00 37.59,31.00 22.00,40.00 6.41,31.00 6.41,13.00";
+
+/// The sigil next to the wordmark — the same geometry as `HexMark.svelte`
+/// (outer ring at radius 18, filled inner hexagon at 9, in a 44×44 box).
+fn hex_mark(size: u32) -> String {
+    format!(
+        "<svg width=\"{size}\" height=\"{size}\" viewBox=\"0 0 44 44\" aria-hidden=\"true\" class=\"shrink-0\">\
+<polygon points=\"{HEX_MARK_OUTER}\" fill=\"none\" stroke=\"var(--color-ember)\" stroke-width=\"2\" stroke-opacity=\"0.85\" />\
+<polygon points=\"{HEX_MARK_INNER}\" fill=\"var(--color-red)\" /></svg>"
+    )
+}
+
+/// The live-feed chip: same shape as `StatusChip.svelte`, rendered with the
+/// count the server already knows. It does not animate for the pointer, but it
+/// says the same thing.
+fn status_chip(status: Option<&str>) -> String {
+    let label = escape(status.unwrap_or("linking"));
+    let dot = if status.is_some() {
+        "bg-ember"
+    } else {
+        "bg-faint"
+    };
+    let tone = if status.is_some() {
+        "text-dim"
+    } else {
+        "text-faint"
+    };
+    format!(
+        "<a href=\"/server\" title=\"{label}\" class=\"clip-corner-sm flex shrink-0 items-center gap-2 whitespace-nowrap border border-line/90 bg-panel/80 px-2.5 py-1.5 transition-colors hover:border-ember/60 hover:bg-panel-hi\">\
+<span class=\"relative flex size-1.5\"><span class=\"relative size-1.5 rounded-full {dot}\"></span></span>\
+<span class=\"label whitespace-nowrap {tone}\">{label}</span></a>"
+    )
+}
+
+/// `HexBackdrop.svelte`: the hex field, the warm wash and the vignette. The
+/// pointer-following spotlight keeps its default position, so nothing here needs
+/// JavaScript.
+fn backdrop() -> String {
+    "<div class=\"pointer-events-none fixed inset-0 -z-10 overflow-hidden\" aria-hidden=\"true\" style=\"--mx: 50%; --my: 15%; --shift-x: 0px; --shift-y: 0px;\">\
+<div class=\"hexes absolute -inset-10 opacity-[0.045]\"></div>\
+<div class=\"absolute inset-x-0 top-0 h-[55vh]\" style=\"background: radial-gradient(ellipse 85% 100% at 50% 0%, rgba(224, 57, 28, 0.11), transparent 72%);\"></div>\
+<div class=\"absolute inset-0\" style=\"background: radial-gradient(680px circle at var(--mx) var(--my), rgba(255, 122, 24, 0.075), transparent 62%);\"></div>\
+<div class=\"absolute inset-0\" style=\"background: radial-gradient(ellipse at 50% 35%, transparent 45%, #070506 100%);\"></div>\
+</div>"
+        .to_string()
+}
+
+fn header(active: &str, account: &str, status: Option<&str>) -> String {
     let mut items = String::new();
     for (href, label) in NAV {
         let on = active == href;
@@ -150,21 +207,28 @@ fn header(active: &str, account: &str) -> String {
 <div class=\"h-[2px] w-full bg-gradient-to-r from-red-deep via-ember to-transparent\"></div>\
 <div class=\"mx-auto flex w-full max-w-6xl items-center gap-3 px-4 py-3 sm:px-6\">\
 <a href=\"/\" class=\"group flex items-center gap-2.5\">\
-<span class=\"heading text-base tracking-[0.1em] text-ink sm:text-lg sm:tracking-[0.12em]\">The Commonwealth</span>\
+{mark}\
+<span class=\"flex flex-col leading-none\">\
+<span class=\"heading text-base tracking-[0.1em] text-ink transition-colors group-hover:text-amber sm:text-lg sm:tracking-[0.12em]\">The Commonwealth</span>\
+<span class=\"label mt-1 hidden text-faint sm:block\">Global Agenda community server</span>\
+</span>\
 </a>\
-<div class=\"ml-auto flex items-center gap-3\">\
+<div class=\"ml-auto flex items-center gap-2\">\
 <a class=\"label hidden px-2 py-1.5 text-dim transition-colors hover:text-ink lg:block\" href=\"{DISCORD}\" target=\"_blank\" rel=\"noopener noreferrer\">Discord</a>\
 {account}\
+{chip}\
 </div>\
 </div>\
 <nav class=\"border-t border-line/50\"><div class=\"mx-auto w-full max-w-6xl px-2 sm:px-4\">\
 <ul class=\"flex overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden\">{items}</ul>\
 </div></nav>\
-</header>"
+</header>",
+        mark = hex_mark(28),
+        chip = status_chip(status),
     )
 }
 
-fn footer(site_url: &str) -> String {
+fn footer(site_url: &str, signed_in: bool) -> String {
     let mut play = String::new();
     for (href, label) in FOOTER_PLAY {
         play.push_str(&format!(
@@ -172,27 +236,46 @@ fn footer(site_url: &str) -> String {
             escape(label)
         ));
     }
+    // The Svelte footer offers sign-in; offering it to someone who is signed in
+    // would be a dead end.
+    let sign_in = if signed_in {
+        "<a class=\"text-sm text-dim transition-colors hover:text-ember\" href=\"/me\">Your page</a>"
+    } else {
+        "<a class=\"text-sm text-dim transition-colors hover:text-ember\" href=\"/login\">Sign in</a>"
+    };
     format!(
         "<footer class=\"mt-12 border-t border-line/60 bg-carbon/50\">\
 <div class=\"mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-10 sm:px-6\">\
 <div class=\"grid gap-8 sm:grid-cols-[1.4fr_1fr_1fr]\">\
 <div class=\"flex flex-col gap-3\">\
-<span class=\"heading text-base tracking-[0.12em] text-ink\">The Commonwealth</span>\
-<p class=\"max-w-md text-sm leading-relaxed text-dim\">A community-run server for Global Agenda, the 2010 team shooter that Hi-Rez Studios shut down in 2018. Free to play, online around the clock.</p>\
+<div class=\"flex items-center gap-2.5\">{mark}\
+<span class=\"heading text-base tracking-[0.12em] text-ink\">The Commonwealth</span></div>\
+<p class=\"max-w-md text-sm leading-relaxed text-dim\">A community-run server for Global Agenda, the 2010 team shooter that Hi-Rez Studios shut down in 2018. Free to play, open source, online around the clock.</p>\
 </div>\
 <nav class=\"flex flex-col gap-2\"><span class=\"label text-faint\">Play</span>{play}</nav>\
 <nav class=\"flex flex-col gap-2\"><span class=\"label text-faint\">Elsewhere</span>\
 <a class=\"text-sm text-dim transition-colors hover:text-ember\" href=\"{DISCORD}\" target=\"_blank\" rel=\"noopener noreferrer\">Discord</a>\
-<a class=\"text-sm text-dim transition-colors hover:text-ember\" href=\"{GITHUB}\" target=\"_blank\" rel=\"noopener noreferrer\">GitHub</a>\
 <a class=\"text-sm text-dim transition-colors hover:text-ember\" href=\"/community\">Community</a>\
+<a class=\"text-sm text-dim transition-colors hover:text-ember\" href=\"{GITHUB}\" target=\"_blank\" rel=\"noopener noreferrer\">Source code</a>\
+{sign_in}\
+<a class=\"text-sm text-dim transition-colors hover:text-ember\" href=\"/api/status\">Status API</a>\
 </nav>\
 </div>\
-<p class=\"label text-faint\">Not affiliated with Hi-Rez Studios.</p>\
+<p class=\"border-t border-line/50 pt-5 text-xs leading-relaxed text-faint\">Not affiliated with Hi-Rez Studios. Global Agenda and all related assets are the property of their respective owners. This server is a non-commercial fan project.</p>\
+<!-- canonical site: {site} -->\
 </div>\
-</footer>\
-<!-- canonical site: {site} -->",
-        site = escape(site_url)
+</footer>",
+        mark = hex_mark(20),
+        site = escape(site_url),
     )
+}
+
+/// Who is looking: the two things in the chrome that differ per visitor.
+#[derive(Default)]
+pub struct Chrome<'a> {
+    pub signed_in_as: Option<&'a str>,
+    /// The status chip's text, e.g. "3 agents in-game".
+    pub status: Option<&'a str>,
 }
 
 /// Everything the feed page needs to know about the viewer's rights.
@@ -203,7 +286,13 @@ pub struct PostingHint {
     pub reason: Option<String>,
 }
 
-pub fn feed(posts: &[Post], hint: &PostingHint, stylesheets: &[String], base: &str) -> String {
+pub fn feed(
+    posts: &[Post],
+    hint: &PostingHint,
+    chrome: &Chrome,
+    stylesheets: &[String],
+    base: &str,
+) -> String {
     let canonical = format!("{base}/news");
     let description =
         "News, guides, server updates and videos from the Commonwealth Global Agenda community.";
@@ -237,7 +326,8 @@ pub fn feed(posts: &[Post], hint: &PostingHint, stylesheets: &[String], base: &s
         stylesheets,
         head: String::new(),
         active: "/news",
-        signed_in_as: None,
+        signed_in_as: chrome.signed_in_as,
+        status: chrome.status,
     };
     document(&meta, &body)
 }
@@ -302,6 +392,7 @@ pub fn post_page(
     post: &Post,
     reacted: bool,
     pending: bool,
+    chrome: &Chrome,
     stylesheets: &[String],
     base: &str,
 ) -> String {
@@ -378,7 +469,8 @@ pub fn post_page(
         stylesheets,
         head,
         active: "/news",
-        signed_in_as: None,
+        signed_in_as: chrome.signed_in_as,
+        status: chrome.status,
     };
     document(&meta, &body)
 }
@@ -573,6 +665,7 @@ mod tests {
             &sample_post(),
             true,
             false,
+            &Chrome::default(),
             &styles(),
             "https://example.test",
         );
@@ -609,6 +702,7 @@ mod tests {
             &sample_post(),
             false,
             false,
+            &Chrome::default(),
             &styles(),
             "https://example.test",
         );
@@ -631,6 +725,7 @@ mod tests {
             &sample_post(),
             false,
             true,
+            &Chrome::default(),
             &styles(),
             "https://example.test",
         );
@@ -639,6 +734,7 @@ mod tests {
             &sample_post(),
             false,
             false,
+            &Chrome::default(),
             &styles(),
             "https://example.test",
         );
@@ -653,7 +749,13 @@ mod tests {
             may_post: false,
             reason: Some("Sign in with your game account to submit a post.".to_string()),
         };
-        let page = feed(&[sample_post()], &hint, &styles(), "https://example.test");
+        let page = feed(
+            &[sample_post()],
+            &hint,
+            &Chrome::default(),
+            &styles(),
+            "https://example.test",
+        );
         assert!(page.contains("href=\"/news/12-solo-the-surfside-bunker-script\""));
         assert!(page.contains("Guide"));
         assert!(page.contains("Sign in"), "the reason is shown");
@@ -668,7 +770,13 @@ mod tests {
             may_post: true,
             reason: None,
         };
-        let page = feed(&[sample_post()], &hint, &styles(), "https://example.test");
+        let page = feed(
+            &[sample_post()],
+            &hint,
+            &Chrome::default(),
+            &styles(),
+            "https://example.test",
+        );
         assert!(page.contains("Write a post"), "{page}");
         assert!(page.contains("href=\"/news/submit\""));
     }
@@ -681,7 +789,13 @@ mod tests {
             may_post: true,
             reason: None,
         };
-        let page = feed(&[], &hint, &styles(), "https://example.test");
+        let page = feed(
+            &[],
+            &hint,
+            &Chrome::default(),
+            &styles(),
+            "https://example.test",
+        );
         assert!(page.contains("Nothing published yet"), "{page}");
     }
 
@@ -702,12 +816,133 @@ mod tests {
         post.kind = Kind::Video;
         post.video_id = Some("dQw4w9WgXcQ".to_string());
         post.link = Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_string());
-        let page = post_page(&post, false, false, &styles(), "https://example.test");
+        let page = post_page(
+            &post,
+            false,
+            false,
+            &Chrome::default(),
+            &styles(),
+            "https://example.test",
+        );
         assert!(
             page.contains("youtube-nocookie.com/embed/dQw4w9WgXcQ"),
             "{page}"
         );
         assert!(page.contains("Watch on YouTube"));
+    }
+
+    #[test]
+    fn the_header_shows_who_is_signed_in() {
+        // The bug this pins: the page rendered "Sign in" to a signed-in reader,
+        // because the chrome was built without their name.
+        let signed_in = Chrome {
+            signed_in_as: Some("Agent07"),
+            status: None,
+        };
+        let page = feed(
+            &[sample_post()],
+            &hint(),
+            &signed_in,
+            &styles(),
+            "https://example.test",
+        );
+        assert!(
+            page.contains("Agent07"),
+            "the account name is in the header"
+        );
+        assert!(
+            page.contains("href=\"/me\""),
+            "the account chip links to the player page: {page}"
+        );
+        // Scoped to the header: the posting hint below can legitimately tell an
+        // anonymous reader to sign in, and this test is about the account chip.
+        let header = page
+            .split("<header")
+            .nth(1)
+            .and_then(|rest| rest.split("</header>").next())
+            .expect("the page has a header");
+        assert!(
+            !header.contains("Sign in"),
+            "a signed-in reader is not offered sign-in: {header}"
+        );
+
+        let anonymous = feed(
+            &[sample_post()],
+            &hint(),
+            &Chrome::default(),
+            &styles(),
+            "https://example.test",
+        );
+        let anonymous_header = anonymous
+            .split("<header")
+            .nth(1)
+            .and_then(|rest| rest.split("</header>").next())
+            .expect("header");
+        assert!(anonymous_header.contains("Sign in"), "{anonymous_header}");
+    }
+
+    #[test]
+    fn the_header_carries_the_live_status_chip() {
+        let live = Chrome {
+            signed_in_as: None,
+            status: Some("3 agents in-game"),
+        };
+        let page = feed(&[], &hint(), &live, &styles(), "https://example.test");
+        assert!(
+            page.contains("3 agents in-game"),
+            "the chip says what the server knows"
+        );
+        assert!(
+            page.contains("href=\"/server\""),
+            "and links to the status page"
+        );
+
+        let unknown = feed(
+            &[],
+            &hint(),
+            &Chrome::default(),
+            &styles(),
+            "https://example.test",
+        );
+        assert!(
+            unknown.contains("linking"),
+            "no status yet renders the placeholder, not a wrong count"
+        );
+    }
+
+    #[test]
+    fn the_chrome_is_the_sites_chrome_not_a_plainer_one() {
+        // What was missing when the page first shipped: the sigil, the tagline,
+        // the backdrop and the footer's third column.
+        let page = feed(
+            &[],
+            &hint(),
+            &Chrome::default(),
+            &styles(),
+            "https://example.test",
+        );
+        assert!(page.contains(HEX_MARK_OUTER), "the hex mark: {page}");
+        assert!(
+            page.contains("Global Agenda community server"),
+            "the tagline"
+        );
+        assert!(page.contains("class=\"hexes"), "the hex backdrop");
+        for expected in [
+            "Source code",
+            "Status API",
+            "Not affiliated with Hi-Rez Studios",
+        ] {
+            assert!(page.contains(expected), "footer is missing {expected}");
+        }
+    }
+
+    fn hint() -> PostingHint {
+        PostingHint {
+            mode: "open",
+            signed_in: false,
+            may_post: false,
+            reason: Some("Sign in with your game account to submit a post.".to_string()),
+        }
     }
 
     /// The chrome is duplicated between Rust and Svelte; this is what stops the

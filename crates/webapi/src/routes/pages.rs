@@ -35,7 +35,18 @@ pub async fn feed(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Api
         reason: verdict.err().map(|denial| denial.message().to_string()),
     };
 
-    let html = pages::feed(&posts, &hint, &state.stylesheets, &state.cfg.site_url);
+    let chip = chip_text(&state).await;
+    let chrome = pages::Chrome {
+        signed_in_as: viewer.session.as_ref().map(|s| s.username.as_str()),
+        status: chip.as_deref(),
+    };
+    let html = pages::feed(
+        &posts,
+        &hint,
+        &chrome,
+        &state.stylesheets,
+        &state.cfg.site_url,
+    );
     Ok(html_response(html))
 }
 
@@ -93,10 +104,16 @@ pub async fn post(
         None => false,
     };
 
+    let chip = chip_text(&state).await;
+    let chrome = pages::Chrome {
+        signed_in_as: viewer.session.as_ref().map(|s| s.username.as_str()),
+        status: chip.as_deref(),
+    };
     let html = pages::post_page(
         &post,
         reacted,
         pending,
+        &chrome,
         &state.stylesheets,
         &state.cfg.site_url,
     );
@@ -123,6 +140,21 @@ pub async fn sitemap_xml(State(state): State<Arc<AppState>>) -> ApiResult<Respon
         xml,
     )
         .into_response())
+}
+
+/// What the header chip says, from the same service `/api/status` reads. The
+/// Svelte chip updates over SSE; this one is correct as of the request.
+async fn chip_text(state: &AppState) -> Option<String> {
+    let status = state.status.current().await.ok()?;
+    if status.control_server == Some(false) {
+        return Some("server down".to_string());
+    }
+    Some(match status.players {
+        Some(1) => "1 agent in-game".to_string(),
+        Some(players) => format!("{players} agents in-game"),
+        // An operator override replaced the count.
+        None => status.text,
+    })
 }
 
 fn html_response(html: String) -> Response {
