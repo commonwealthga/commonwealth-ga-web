@@ -14,9 +14,10 @@
 		{ href: '/events', label: 'Events' },
 		{ href: '/agents', label: 'Agents' },
 		{ href: '/missions', label: 'Missions' },
-		// Guides and builds share one menu entry: /guides is the default view and
-		// links to /builds, the way /agents leads to /leaderboard.
+		// Two entries, because they are two things a visitor looks for; each page
+		// also links to the other.
 		{ href: '/guides', label: 'Guides' },
+		{ href: '/builds', label: 'Builds' },
 		{ href: '/news', label: 'News' }
 	];
 
@@ -57,11 +58,10 @@
 				{#each links as link (link.href)}
 					{@const on = active(link.href)}
 					<li class="shrink-0">
-						<!-- `/news` is served by the Rust server, not by this app, so ask
-						     for a real navigation rather than letting the router try and fail. -->
+						<!-- Every page is a SvelteKit route now, so nothing here opts out
+						     of client-side navigation. -->
 						<a
 							href={link.href}
-							data-sveltekit-reload={link.href === '/news' || undefined}
 							aria-current={on ? 'page' : undefined}
 							class="relative flex items-baseline px-3 py-3 transition-colors sm:px-4"
 						>
