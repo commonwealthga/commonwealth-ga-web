@@ -8,6 +8,11 @@ WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY web/ ./
+# Tailwind scans the Rust templates that render the news pages (see the @source
+# directive in web/src/app.css). Without this file in the build context the
+# classes those templates use are simply absent from the stylesheet, which shows
+# up as unstyled news pages rather than as an error.
+COPY crates/webapi/src/news/pages.rs /crates/webapi/src/news/pages.rs
 RUN npm run build
 
 # --- backend ----------------------------------------------------------------

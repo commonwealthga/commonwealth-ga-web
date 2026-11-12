@@ -19,7 +19,7 @@ use super::access;
 use super::store::Post;
 
 /// Nav links, in the order `Nav.svelte` lists them. Kept in step by a test.
-pub const NAV: [(&str, &str); 8] = [
+pub const NAV: [(&str, &str); 7] = [
     ("/play", "Get started"),
     ("/server", "Server status"),
     ("/roadmap", "Roadmap"),
@@ -27,7 +27,7 @@ pub const NAV: [(&str, &str); 8] = [
     ("/events", "Events"),
     ("/agents", "Agents"),
     ("/missions", "Missions"),
-    ("/news", "News"),
+    // "/news" is added here at release, with the Svelte nav entry.
 ];
 
 /// Footer groups, mirroring the Svelte footer.
