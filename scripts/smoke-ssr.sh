@@ -64,9 +64,9 @@ path, title, marker = sys.argv[1], sys.argv[2], sys.argv[3]
 with sqlite3.connect(path) as db:
     db.execute(
         """INSERT INTO news_posts
-           (kind, title, slug, summary, body_markdown, body_html, status,
+           (kind, title, slug, body_markdown, body_html, status,
             author_id, author_name, created_at)
-           VALUES ('news', ?, 'smoke-test-headline', '', ?, ?, 'approved', 1, 'smoketester', ?)""",
+           VALUES ('news', ?, 'smoke-test-headline', ?, ?, 'approved', 1, 'smoketester', ?)""",
         (title, marker, f"<p>{marker}</p>", int(time.time())),
     )
 PY
@@ -116,5 +116,16 @@ for needle in "Guides" "Nothing here yet" "/builds"; do
 		|| { echo "FAIL /guides is missing: $needle" >&2; exit 1; }
 done
 echo "ok   /guides renders on the server"
+
+# A filtered feed is a link: it has to render the filter and respect it.
+filtered="$work/filtered.html"
+curl -fsS -m 15 "http://127.0.0.1:$SITE_PORT/news?kind=update" >"$filtered"
+grep -qF "Server updates" "$filtered" \
+	|| { echo "FAIL the kind filter is missing from the feed" >&2; exit 1; }
+if grep -qF "$TITLE" "$filtered"; then
+	echo "FAIL a news entry appeared under the server-updates filter" >&2
+	exit 1
+fi
+echo "ok   the feed filters by kind"
 
 echo "all checks passed"

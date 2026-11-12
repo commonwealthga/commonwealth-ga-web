@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::AppState;
 use crate::auth::now_unix;
 use crate::error::{ApiResult, AppError};
-use crate::news::{self, Status, access, markdown, store};
+use crate::news::{self, Kind, Status, access, markdown, store};
 use crate::routes::auth::current_session;
 
 /// Feed page size when the client does not ask, and the most it may ask for.
@@ -53,6 +53,10 @@ pub async fn allowance(site: &sqlx::SqlitePool, user_id: i64, now: i64) -> ApiRe
 pub struct Page {
     limit: Option<i64>,
     offset: Option<i64>,
+    /// Narrow the feed to one kind: `news`, `update`, `article` or `video`.
+    /// Anything else is ignored rather than refused — a stale bookmark should
+    /// still show the feed, not an error.
+    kind: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -61,8 +65,6 @@ pub struct SubmitBody {
     /// Optional for a video entry, which is links and nothing else.
     #[serde(default)]
     title: String,
-    #[serde(default)]
-    summary: String,
     #[serde(default)]
     body: String,
     /// Video entries send one or more links; everything else sends at most one.
@@ -95,7 +97,6 @@ pub struct PostView {
     pub title: String,
     pub slug: String,
     pub path: String,
-    pub summary: String,
     pub body_html: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub body_markdown: Option<String>,
@@ -159,7 +160,6 @@ impl PostView {
             title: post.title.clone(),
             slug: post.slug.clone(),
             path: post.path(),
-            summary: post.summary.clone(),
             body_html: post.body_html.clone(),
             body_markdown: with_markdown.then(|| post.body_markdown.clone()),
             link: post.link.clone(),
@@ -258,9 +258,12 @@ pub async fn feed(
     let limit = page.limit.unwrap_or(FEED_DEFAULT).clamp(1, FEED_MAX);
     let offset = page.offset.unwrap_or(0).max(0);
 
-    let posts = store::feed(site, limit, offset).await.map_err(internal)?;
+    let kind = page.kind.as_deref().and_then(Kind::parse);
+    let posts = store::feed(site, kind, limit, offset)
+        .await
+        .map_err(internal)?;
     let reacted = reacted_set(site, &viewer, &posts).await?;
-    let total = store::count_approved(site).await.map_err(internal)?;
+    let total = store::count_approved(site, kind).await.map_err(internal)?;
 
     // Only the first page carries the queue and the reader's own pending work:
     // a later page of the endless scroll is entries and nothing else.
@@ -307,6 +310,7 @@ pub async fn feed(
         "offset": offset,
         "moderator": viewer.roles.moderator,
         "posting": rules_for(&state, &viewer),
+        "filter": { "kind": kind.map(|kind| kind.as_str()) },
     }))
     .into_response())
 }
@@ -410,7 +414,7 @@ pub async fn submit(
     if let Some(single) = body.link {
         links.push(single);
     }
-    let entry = news::validate(&body.kind, &body.title, &body.summary, &body.body, &links)
+    let entry = news::validate(&body.kind, &body.title, &body.body, &links)
         .map_err(|error| AppError::BadRequest(error.message().to_string()))?;
 
     let id = store::create(site, session.user_id, &session.username, &entry, now)
@@ -592,7 +596,7 @@ pub async fn update(
     if let Some(single) = body.link {
         links.push(single);
     }
-    let entry = news::validate(&body.kind, &body.title, &body.summary, &body.body, &links)
+    let entry = news::validate(&body.kind, &body.title, &body.body, &links)
         .map_err(|error| AppError::BadRequest(error.message().to_string()))?;
 
     let changed = store::update_pending(site, id, session.user_id, &entry, now_unix())

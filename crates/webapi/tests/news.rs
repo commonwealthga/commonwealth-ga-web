@@ -111,6 +111,16 @@ async fn send(app: &Router, request: Request<Body>) -> (StatusCode, String) {
     (status, String::from_utf8_lossy(&body).to_string())
 }
 
+/// One entry of a given kind, for the tests that only care about the kind.
+fn of_kind(kind: &str, title: &str) -> serde_json::Value {
+    serde_json::json!({
+        "kind": kind,
+        "title": title,
+        "body": "Something worth saying.",
+        "links": [],
+    })
+}
+
 fn submit_request(cookie: Option<&str>, payload: serde_json::Value) -> Request<Body> {
     let mut builder = Request::builder()
         .method("POST")
@@ -150,7 +160,6 @@ fn post_payload() -> serde_json::Value {
     serde_json::json!({
         "kind": "article",
         "title": "How to solo the Surfside bunker",
-        "summary": "A route that works with a starter suit.",
         "body": "## Prep\n\nBring **two** medkits and _do not_ rush the lift.",
     })
 }
@@ -621,7 +630,6 @@ async fn an_author_can_edit_their_own_entry_while_it_waits() {
     let edited = serde_json::json!({
         "kind": "article",
         "title": "Surfside bunker, solo — corrected",
-        "summary": "Fixed the route after the lift change.",
         "body": "## Prep\n\nBring **three** medkits now."
     });
     let request = Request::builder()
@@ -1122,4 +1130,54 @@ async fn the_preview_matches_what_will_be_stored() {
         preview_html,
         "the preview and the published post must render identically"
     );
+}
+
+#[tokio::test]
+async fn the_feed_can_be_narrowed_to_one_kind() {
+    let harness = Harness::new().await;
+    let moderator = harness.session(70, "mod").await;
+    let app = harness.router(
+        Some(harness.live_with_roles(&[(70, "news_moderator")]).await),
+        PostingMode::Open,
+    );
+    let author = harness.session(71, "author").await;
+
+    for (kind, title) in [
+        ("news", "A news item"),
+        ("update", "An update about suits"),
+        ("article", "A long article"),
+    ] {
+        let (status, body) = send(&app, submit_request(Some(&author), of_kind(kind, title))).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        let id: i64 = serde_json::from_str::<serde_json::Value>(&body).expect("json")["id"]
+            .as_i64()
+            .expect("id");
+        send(
+            &app,
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/news/{id}/approve"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::COOKIE, format!("cw_session={moderator}"))
+                .body(Body::from("{}"))
+                .expect("request"),
+        )
+        .await;
+    }
+
+    // The whole feed holds all three ...
+    let (_, all) = send(&app, get(None, "/api/news")).await;
+    assert!(all.contains("\"total\":3"), "{all}");
+
+    // ... and the filtered one holds only its kind, including in the total.
+    let (_, updates) = send(&app, get(None, "/api/news?kind=update")).await;
+    assert!(updates.contains("An update about suits"), "{updates}");
+    assert!(!updates.contains("A long article"), "{updates}");
+    assert!(updates.contains("\"total\":1"), "{updates}");
+    assert!(updates.contains("\"kind\":\"update\""), "{updates}");
+
+    // A stale or invented kind shows the whole feed rather than an error page.
+    let (status, unknown) = send(&app, get(None, "/api/news?kind=blog")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(unknown.contains("\"total\":3"), "{unknown}");
 }

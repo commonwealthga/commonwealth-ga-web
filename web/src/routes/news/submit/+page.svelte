@@ -38,7 +38,6 @@
 		kinds: KindOption[];
 		limits: {
 			title_max: number;
-			summary_max: number;
 			body_max: number;
 			per_day: number;
 			max_videos: number;
@@ -48,7 +47,6 @@
 	let rules = $state<Rules | null>(null);
 	let kind = $state('news');
 	let title = $state('');
-	let summary = $state('');
 	let body = $state('');
 	let videoLinks = $state('');
 	let preview = $state('');
@@ -127,7 +125,6 @@
 					}
 					kind = post.kind;
 					title = post.title ?? '';
-					summary = post.summary ?? '';
 					body = post.body_markdown ?? '';
 					videoLinks = (post.videos ?? [])
 						.map((id: string) => 'https://youtu.be/' + id)
@@ -231,7 +228,6 @@
 					kind,
 					// A video carries no title or body: the form does not ask.
 					title: hasEditor ? title : '',
-					summary: hasEditor ? summary : '',
 					body: hasEditor ? body : '',
 					links: isVideo ? links : []
 				})
@@ -248,7 +244,6 @@
 					'Thanks — a moderator will review it before it appears on the site.');
 			phase = 'sent';
 			title = '';
-			summary = '';
 			body = '';
 			videoLinks = '';
 			preview = '';
@@ -402,19 +397,6 @@
 							maxlength={rules.limits.title_max}
 							bind:value={title}
 							placeholder="Surfside Atoll is live"
-						/>
-					</label>
-
-					<label class="flex flex-col gap-1.5">
-						<span class="label flex justify-between text-faint">
-							<span>Summary (the line search results show)</span>
-							<span>{summary.length}/{rules.limits.summary_max}</span>
-						</span>
-						<input
-							class="border border-line/70 bg-panel/60 px-3 py-2 text-sm text-ink"
-							maxlength={rules.limits.summary_max}
-							bind:value={summary}
-							placeholder="One sentence about the post"
 						/>
 					</label>
 

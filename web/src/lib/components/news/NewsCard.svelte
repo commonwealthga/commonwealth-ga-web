@@ -111,10 +111,6 @@
 		<h2 class="heading mt-2 text-2xl text-ink">{post.title}</h2>
 	{/if}
 
-	{#if post.summary && post.videos.length > 0}
-		<p class="mt-2 text-sm leading-relaxed text-dim">{post.summary}</p>
-	{/if}
-
 	{#if post.body_html}
 		<!-- Rendered by the server from a whitelist of tags, so this is inert. -->
 		<div class="prose-news mt-4 flex flex-col gap-3 text-base leading-relaxed text-dim">

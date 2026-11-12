@@ -163,7 +163,6 @@ impl std::error::Error for ConfigError {}
 
 pub const TITLE_MIN: usize = 3;
 pub const TITLE_MAX: usize = 120;
-pub const SUMMARY_MAX: usize = 300;
 pub const BODY_MAX: usize = 20_000;
 /// Slugs are for readers, not databases: long enough to read, short enough to fit.
 const SLUG_MAX: usize = 60;
@@ -182,7 +181,6 @@ pub enum DraftError {
     UnknownKind,
     TitleLength,
     TitleControl,
-    SummaryTooLong,
     BodyRequired,
     BodyTooLong,
     LinkRequired,
@@ -196,7 +194,6 @@ impl DraftError {
             DraftError::UnknownKind => "That entry type does not exist.",
             DraftError::TitleLength => "The title needs 3 to 120 characters.",
             DraftError::TitleControl => "The title contains characters that cannot be shown.",
-            DraftError::SummaryTooLong => "The summary can be at most 300 characters.",
             DraftError::BodyRequired => "Write something in the body.",
             DraftError::BodyTooLong => "The body is too long (20,000 characters at most).",
             DraftError::LinkRequired => "A video entry needs a YouTube link.",
@@ -219,7 +216,6 @@ impl std::error::Error for DraftError {}
 pub struct Validated {
     pub kind: Kind,
     pub title: String,
-    pub summary: String,
     pub body_markdown: String,
     /// Rendered once, here, so what a moderator approves is exactly what is
     /// served later (`news::markdown` is the only thing that produces it).
@@ -237,7 +233,6 @@ pub struct Validated {
 pub fn validate(
     kind: &str,
     title: &str,
-    summary: &str,
     body_markdown: &str,
     links: &[String],
 ) -> Result<Validated, DraftError> {
@@ -247,11 +242,6 @@ pub fn validate(
         .map(|link| link.trim())
         .filter(|link| !link.is_empty())
         .collect();
-
-    let summary = normalise_line(summary).ok_or(DraftError::SummaryTooLong)?;
-    if summary.chars().count() > SUMMARY_MAX {
-        return Err(DraftError::SummaryTooLong);
-    }
 
     // A video entry is a set of links: the form asks for nothing else, and a
     // title would be invented rather than written.
@@ -273,7 +263,6 @@ pub fn validate(
         return Ok(Validated {
             kind,
             title: String::new(),
-            summary,
             body_markdown: String::new(),
             body_html: String::new(),
             link: videos
@@ -315,7 +304,6 @@ pub fn validate(
         kind,
         slug: slugify(&title),
         title,
-        summary,
         body_html: markdown::to_html(&body_markdown),
         body_markdown,
         link,
@@ -442,14 +430,8 @@ mod tests {
 
     #[test]
     fn a_valid_entry_normalises_and_renders() {
-        let entry = validate(
-            "news",
-            "  Surfside   Atoll opens  ",
-            "A new PvP map pool.",
-            "**Live now**",
-            &[],
-        )
-        .expect("valid");
+        let entry =
+            validate("news", "  Surfside   Atoll opens  ", "**Live now**", &[]).expect("valid");
         assert_eq!(entry.title, "Surfside Atoll opens");
         assert_eq!(entry.slug, "surfside-atoll-opens");
         assert_eq!(entry.body_html, "<p><strong>Live now</strong></p>");
@@ -471,24 +453,24 @@ mod tests {
     #[test]
     fn titles_are_bounded_and_single_line() {
         assert_eq!(
-            validate("news", "ab", "", "body", &[]),
+            validate("news", "ab", "", &[]),
             Err(DraftError::TitleLength)
         );
         let long = "x".repeat(TITLE_MAX + 1);
         assert_eq!(
-            validate("news", &long, "", "body", &[]),
+            validate("news", &long, "body", &[]),
             Err(DraftError::TitleLength)
         );
         // A pasted line break is whitespace and collapses.
-        let collapsed = validate("news", "ok\n  title", "", "body", &[]).expect("valid");
+        let collapsed = validate("news", "ok\n  title", "body", &[]).expect("valid");
         assert_eq!(collapsed.title, "ok title");
         // An actual control character is refused rather than stored.
         assert_eq!(
-            validate("news", "bad\u{7}title", "", "body", &[]),
+            validate("news", "bad\u{7}title", "", &[]),
             Err(DraftError::TitleControl)
         );
         assert_eq!(
-            validate("news", "nul\u{0}byte", "", "body", &[]),
+            validate("news", "nul\u{0}byte", "", &[]),
             Err(DraftError::TitleControl)
         );
     }
@@ -496,11 +478,11 @@ mod tests {
     #[test]
     fn written_entries_need_a_body_and_a_title() {
         assert_eq!(
-            validate("article", "Some article", "", "   ", &[]),
+            validate("article", "Some article", "", &[]),
             Err(DraftError::BodyRequired)
         );
         assert_eq!(
-            validate("update", "", "", "body", &[]),
+            validate("update", "", "", &[]),
             Err(DraftError::TitleLength)
         );
     }
@@ -511,7 +493,6 @@ mod tests {
         // the author, the kind and the date.
         let entry = validate(
             "video",
-            "",
             "",
             "",
             &["https://youtu.be/dQw4w9WgXcQ".to_string()],
@@ -526,11 +507,11 @@ mod tests {
         );
 
         assert_eq!(
-            validate("video", "", "", "", &[]),
+            validate("video", "", "", &[]),
             Err(DraftError::LinkRequired)
         );
         assert_eq!(
-            validate("video", "", "", "", &["https://example.org/v".to_string()]),
+            validate("video", "", "", &["https://example.org/v".to_string()]),
             Err(DraftError::LinkInvalid)
         );
     }
@@ -543,7 +524,7 @@ mod tests {
             // A repeat is dropped rather than shown twice.
             "https://youtu.be/dQw4w9WgXcQ".to_string(),
         ];
-        let entry = validate("video", "", "", "", &links).expect("valid");
+        let entry = validate("video", "", "", &links).expect("valid");
         assert_eq!(
             entry.videos,
             vec!["dQw4w9WgXcQ".to_string(), "aaaaaaaaaaa".to_string()]
@@ -553,7 +534,7 @@ mod tests {
             .map(|i| format!("https://youtu.be/video{i:04}"))
             .collect();
         assert_eq!(
-            validate("video", "", "", "", &too_many),
+            validate("video", "", "", &too_many),
             Err(DraftError::TooManyVideos)
         );
     }
@@ -564,7 +545,6 @@ mod tests {
             validate(
                 "article",
                 "An article",
-                "",
                 "body",
                 &["http://plain.example".to_string()]
             ),
@@ -574,7 +554,6 @@ mod tests {
         let entry = validate(
             "article",
             "An article",
-            "",
             "body",
             &["https://example.org/a".to_string()],
         )
@@ -620,16 +599,6 @@ mod tests {
         assert_eq!(slugify("Ünïcode déjà vu"), "ncode-dj-vu");
         assert!(slugify(&"word ".repeat(40)).len() <= SLUG_MAX);
         assert!(!slugify(&"a".repeat(200)).contains(' '));
-    }
-
-    #[test]
-    fn summaries_are_optional_but_bounded() {
-        let long = "s".repeat(SUMMARY_MAX + 1);
-        assert_eq!(
-            validate("news", "A title", &long, "body", &[]),
-            Err(DraftError::SummaryTooLong)
-        );
-        assert!(validate("news", "A title", "", "body", &[]).is_ok());
     }
 
     #[test]

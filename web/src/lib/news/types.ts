@@ -17,7 +17,6 @@ export interface NewsPost {
 	title: string;
 	slug: string;
 	path: string;
-	summary: string;
 	body_html: string;
 	body_markdown?: string;
 	link: string | null;
@@ -53,6 +52,8 @@ export interface PostingRules {
 
 /** What `/api/news` answers: the whole feed view, not just a page of it. */
 export interface FeedResponse {
+	/** The kind the list was narrowed to, when it was. */
+	filter?: { kind: 'news' | 'update' | 'article' | 'video' | null };
 	posts: NewsPost[];
 	pending: NewsPost[];
 	total: number;
@@ -72,7 +73,6 @@ export interface RulesResponse extends PostingRules {
 	}[];
 	limits: {
 		title_max: number;
-		summary_max: number;
 		body_max: number;
 		per_day: number;
 		max_videos: number;

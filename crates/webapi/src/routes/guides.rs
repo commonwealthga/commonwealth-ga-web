@@ -704,30 +704,6 @@ pub async fn approve(
 
     // The feed says so too: "X posted a guide", linking at the page. Written by
     // the entry's author and already approved, because the entry is.
-    let summary = match entry.category {
-        Category::Guide => format!("A new guide from {}.", entry.author_name),
-        Category::Build => format!(
-            "A new {} build from {}{}.",
-            entry
-                .build_class
-                .map(|class| class.label())
-                .unwrap_or("skill tree"),
-            entry.author_name,
-            if entry.modes.is_empty() {
-                String::new()
-            } else {
-                format!(
-                    " for {}",
-                    entry
-                        .modes
-                        .iter()
-                        .map(|mode| mode.label())
-                        .collect::<Vec<_>>()
-                        .join(" and ")
-                )
-            }
-        ),
-    };
     let title = format!(
         "{} has posted a {}: {}",
         entry.author_name,
@@ -741,7 +717,6 @@ pub async fn approve(
         &entry.author_name,
         &title,
         &entry.path(),
-        &summary,
         entry.category.as_str(),
         entry.build_class.map(|class| class.as_str()),
         entry

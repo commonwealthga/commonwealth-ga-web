@@ -63,7 +63,6 @@ pub async fn posting_rules(
             .collect::<Vec<_>>(),
         "limits": {
             "title_max": crate::news::TITLE_MAX,
-            "summary_max": crate::news::SUMMARY_MAX,
             "body_max": crate::news::BODY_MAX,
             "per_day": crate::news::RATE_LIMIT,
             "max_videos": crate::news::MAX_VIDEOS,

@@ -24,7 +24,6 @@ pub async fn migrate(pool: &SqlitePool) -> sqlx::Result<()> {
              kind              TEXT    NOT NULL,
              title             TEXT    NOT NULL,
              slug              TEXT    NOT NULL,
-             summary           TEXT    NOT NULL DEFAULT '',
              body_markdown     TEXT    NOT NULL DEFAULT '',
              body_html         TEXT    NOT NULL,
              link              TEXT,
@@ -133,7 +132,6 @@ pub struct Post {
     pub kind: Kind,
     pub title: String,
     pub slug: String,
-    pub summary: String,
     pub body_markdown: String,
     pub body_html: String,
     pub link: Option<String>,
@@ -171,7 +169,7 @@ impl Post {
     }
 }
 
-const SELECT: &str = "SELECT p.id, p.kind, p.title, p.slug, p.summary, p.body_markdown,
+const SELECT: &str = "SELECT p.id, p.kind, p.title, p.slug, p.body_markdown,
                              p.body_html, p.link, p.video_id, p.status, p.author_id,
                              (SELECT GROUP_CONCAT(video_id, char(31)) FROM (
                                   SELECT video_id FROM news_videos v
@@ -211,7 +209,6 @@ fn row_to_post(row: &sqlx::sqlite::SqliteRow) -> Post {
         kind: Kind::parse(row.get::<String, _>("kind").as_str()).unwrap_or(Kind::News),
         title: row.get("title"),
         slug: row.get("slug"),
-        summary: row.get("summary"),
         body_markdown: row.get("body_markdown"),
         body_html: row.get("body_html"),
         link: row.get("link"),
@@ -256,14 +253,13 @@ pub async fn create(
     now: i64,
 ) -> sqlx::Result<i64> {
     let result = sqlx::query(
-        "INSERT INTO news_posts (kind, title, slug, summary, body_markdown, body_html,
+        "INSERT INTO news_posts (kind, title, slug, body_markdown, body_html,
                                  link, video_id, status, author_id, author_name, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(entry.kind.as_str())
     .bind(&entry.title)
     .bind(&entry.slug)
-    .bind(&entry.summary)
     .bind(&entry.body_markdown)
     .bind(&entry.body_html)
     .bind(&entry.link)
@@ -314,7 +310,6 @@ pub async fn announce_guide(
     author_name: &str,
     title: &str,
     path: &str,
-    summary: &str,
     category: &str,
     class: Option<&str>,
     image_url: Option<&str>,
@@ -329,14 +324,13 @@ pub async fn announce_guide(
     }
 
     let result = sqlx::query(
-        "INSERT INTO news_posts (kind, title, slug, summary, body_markdown, body_html,
+        "INSERT INTO news_posts (kind, title, slug, body_markdown, body_html,
                                  link, status, author_id, author_name, created_at,
                                  guide_id, announce_category, announce_class, image_url)
-         VALUES ('news', ?, ?, ?, '', '', ?, 'approved', ?, ?, ?, ?, ?, ?, ?)",
+         VALUES ('news', ?, ?, '', '', ?, 'approved', ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(title)
     .bind(crate::news::slugify(title))
-    .bind(summary)
     .bind(path)
     .bind(author_id)
     .bind(author_name)
@@ -397,23 +391,61 @@ pub async fn allowance_used(
 }
 
 /// Total published posts, for "is there another page".
-pub async fn count_approved(pool: &SqlitePool) -> sqlx::Result<i64> {
-    sqlx::query_scalar("SELECT COUNT(*) FROM news_posts WHERE status = ?")
-        .bind(Status::Approved.as_str())
-        .fetch_one(pool)
-        .await
+pub async fn count_approved(pool: &SqlitePool, kind: Option<Kind>) -> sqlx::Result<i64> {
+    // The count has to honour the same filter as the page: a "12 posts" label
+    // above a filtered list of three is a lie the reader notices immediately.
+    match kind {
+        Some(kind) => {
+            sqlx::query_scalar("SELECT COUNT(*) FROM news_posts WHERE status = ? AND kind = ?")
+                .bind(Status::Approved.as_str())
+                .bind(kind.as_str())
+                .fetch_one(pool)
+                .await
+        }
+        None => {
+            sqlx::query_scalar("SELECT COUNT(*) FROM news_posts WHERE status = ?")
+                .bind(Status::Approved.as_str())
+                .fetch_one(pool)
+                .await
+        }
+    }
 }
 
 /// Approved posts, newest first — the public feed.
-pub async fn feed(pool: &SqlitePool, limit: i64, offset: i64) -> sqlx::Result<Vec<Post>> {
-    let rows = sqlx::query(&format!(
-        "{SELECT} WHERE p.status = ? ORDER BY p.created_at DESC, p.id DESC LIMIT ? OFFSET ?"
-    ))
-    .bind(Status::Approved.as_str())
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
-    .await?;
+///
+/// `kind` narrows it to one kind of entry, which is how someone who only wants
+/// server updates reads the feed without the articles.
+pub async fn feed(
+    pool: &SqlitePool,
+    kind: Option<Kind>,
+    limit: i64,
+    offset: i64,
+) -> sqlx::Result<Vec<Post>> {
+    let rows = match kind {
+        Some(kind) => {
+            sqlx::query(&format!(
+                "{SELECT} WHERE p.status = ? AND p.kind = ?
+                 ORDER BY p.created_at DESC, p.id DESC LIMIT ? OFFSET ?"
+            ))
+            .bind(Status::Approved.as_str())
+            .bind(kind.as_str())
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?
+        }
+        None => {
+            sqlx::query(&format!(
+                "{SELECT} WHERE p.status = ?
+                 ORDER BY p.created_at DESC, p.id DESC LIMIT ? OFFSET ?"
+            ))
+            .bind(Status::Approved.as_str())
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?
+        }
+    };
     Ok(rows.iter().map(row_to_post).collect())
 }
 
@@ -552,14 +584,13 @@ pub async fn update_pending(
 ) -> sqlx::Result<bool> {
     let result = sqlx::query(
         "UPDATE news_posts
-         SET kind = ?, title = ?, slug = ?, summary = ?, body_markdown = ?, body_html = ?,
+         SET kind = ?, title = ?, slug = ?, body_markdown = ?, body_html = ?,
              link = ?, video_id = ?
          WHERE id = ? AND author_id = ? AND status = ?",
     )
     .bind(entry.kind.as_str())
     .bind(&entry.title)
     .bind(&entry.slug)
-    .bind(&entry.summary)
     .bind(&entry.body_markdown)
     .bind(&entry.body_html)
     .bind(&entry.link)
@@ -769,7 +800,7 @@ mod tests {
     }
 
     fn entry(title: &str) -> Validated {
-        super::super::validate("news", title, "", "Body text", &[]).expect("valid entry")
+        super::super::validate("news", title, "Body text", &[]).expect("valid entry")
     }
 
     #[tokio::test]
@@ -780,7 +811,7 @@ mod tests {
             .expect("create");
 
         assert!(
-            feed(&pool, 10, 0).await.expect("feed").is_empty(),
+            feed(&pool, None, 10, 0).await.expect("feed").is_empty(),
             "nothing public yet"
         );
         assert!(approved_by_id(&pool, id).await.expect("lookup").is_none());
@@ -801,7 +832,7 @@ mod tests {
         );
 
         assert!(approve(&pool, id, 1, "mod", 2_000).await.expect("approve"));
-        assert_eq!(feed(&pool, 10, 0).await.expect("feed").len(), 1);
+        assert_eq!(feed(&pool, None, 10, 0).await.expect("feed").len(), 1);
         assert!(pending(&pool).await.expect("queue").is_empty());
         assert!(approved_by_id(&pool, id).await.expect("lookup").is_some());
 
@@ -826,7 +857,7 @@ mod tests {
         );
 
         // Gone from every view...
-        assert!(feed(&pool, 10, 0).await.expect("feed").is_empty());
+        assert!(feed(&pool, None, 10, 0).await.expect("feed").is_empty());
         assert!(approved_by_id(&pool, id).await.expect("lookup").is_none());
         assert!(pending(&pool).await.expect("queue").is_empty());
         assert!(
@@ -946,7 +977,7 @@ mod tests {
         assert!(!has_reacted(&pool, id, 7).await.expect("check"));
 
         // The feed carries the count without a second query per post.
-        let feed = feed(&pool, 10, 0).await.expect("feed");
+        let feed = feed(&pool, None, 10, 0).await.expect("feed");
         assert_eq!(feed[0].thumbs_up, 1);
     }
 
@@ -998,8 +1029,8 @@ mod tests {
             .expect("create");
             approve(&pool, id, 1, "mod", 9_000).await.expect("approve");
         }
-        let first = feed(&pool, 2, 0).await.expect("feed");
-        let second = feed(&pool, 2, 2).await.expect("feed");
+        let first = feed(&pool, None, 2, 0).await.expect("feed");
+        let second = feed(&pool, None, 2, 2).await.expect("feed");
         assert_eq!(first.len(), 2);
         assert_eq!(second.len(), 1);
         assert_eq!(first[0].title, "Post 2");

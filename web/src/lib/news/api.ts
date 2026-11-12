@@ -34,8 +34,10 @@ export function decide(postId: number, action: string, note = '') {
 	});
 }
 
-export function morePosts(offset: number, limit: number) {
+export function morePosts(offset: number, limit: number, kind?: string | null) {
+	const query = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+	if (kind) query.set('kind', kind);
 	return send<{ posts: import('./types').NewsPost[]; total: number; offset: number }>(
-		`/api/news?offset=${offset}&limit=${limit}`
+		`/api/news?${query}`
 	);
 }

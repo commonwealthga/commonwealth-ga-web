@@ -12,11 +12,25 @@ import type { FeedResponse } from '$lib/news/types';
  * The visitor's cookie is forwarded, because what the feed shows depends on who
  * is asking (a moderator's queue, an author's own pending entries).
  */
-export const load = async ({ fetch, request }: { fetch: typeof globalThis.fetch; request: Request }) => {
+export const load = async ({
+	fetch,
+	request,
+	url
+}: {
+	fetch: typeof globalThis.fetch;
+	request: Request;
+	url: URL;
+}) => {
 	const base = (env.API_ORIGIN ?? 'http://127.0.0.1:8080').replace(/\/$/, '');
 	const cookie = request.headers.get('cookie') ?? '';
 
-	const response = await fetch(`${base}/api/news?limit=10`, {
+	// The kind filter is part of the URL, so a filtered feed is a link someone
+	// can send and a crawler can follow.
+	const query = new URLSearchParams({ limit: '10' });
+	const kind = url.searchParams.get('kind');
+	if (kind) query.set('kind', kind);
+
+	const response = await fetch(`${base}/api/news?${query}`, {
 		headers: cookie ? { cookie } : {}
 	});
 
@@ -29,6 +43,7 @@ export const load = async ({ fetch, request }: { fetch: typeof globalThis.fetch;
 				total: 0,
 				offset: 0,
 				moderator: false,
+				filter: { kind: null },
 				posting: {
 					mode: 'unknown',
 					signed_in: false,

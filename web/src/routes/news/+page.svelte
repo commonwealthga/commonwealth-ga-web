@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { morePosts } from '$lib/news/api';
 	import type { NewsPost } from '$lib/news/types';
 	import NewsCard from '$lib/components/news/NewsCard.svelte';
@@ -15,6 +16,28 @@
 	let { data } = $props();
 
 	const feed = $derived(data.feed);
+	const kind = $derived(feed.filter?.kind ?? null);
+
+	// The kinds the filter offers. Labels are the plural a reader would use; the
+	// header line inside each card stays singular ("posted a server update").
+	const KINDS = [
+		{ value: null, label: 'Everything' },
+		{ value: 'news', label: 'News' },
+		{ value: 'update', label: 'Server updates' },
+		{ value: 'article', label: 'Articles' },
+		{ value: 'video', label: 'Videos' }
+	] as const;
+
+	/** Filtering is a navigation, so the server renders the result and the URL
+	 * can be shared. Appending here later only affects the current filter. */
+	function show(next: string | null) {
+		if (next === kind) return;
+		void goto(next ? `/news?kind=${next}` : '/news', {
+			keepFocus: true,
+			noScroll: true,
+			replaceState: true
+		});
+	}
 	const pending = $derived(feed.pending ?? []);
 	const ownPending = $derived(feed.moderator ? [] : pending);
 
@@ -33,7 +56,7 @@
 		loading = true;
 		problem = '';
 		try {
-			const page = await morePosts(loaded, 10);
+			const page = await morePosts(loaded, 10, kind);
 			extra = [...extra, ...page.posts];
 			// A page that added nothing means the total moved under us; stop asking.
 			if (page.posts.length === 0) exhausted = true;
@@ -69,6 +92,25 @@
 		News, articles, server updates and videos posted by the people who play here. Every entry is
 		reviewed by a moderator before it appears.
 	</p>
+</div>
+
+<div class="mt-6 flex flex-wrap items-center gap-1.5">
+	{#each KINDS as option (option.label)}
+		<button
+			type="button"
+			onclick={() => show(option.value)}
+			aria-pressed={kind === option.value}
+			class="label border px-2.5 py-1 transition-colors {kind === option.value
+				? 'border-ember/60 bg-ember/10 text-ember'
+				: 'border-line/70 text-dim hover:border-ember/60 hover:text-ink'}"
+			>{option.label}</button
+		>
+	{/each}
+	{#if feed.total > 0}
+		<span class="label ml-auto text-faint">
+			{feed.total} {feed.total === 1 ? 'entry' : 'entries'}
+		</span>
+	{/if}
 </div>
 
 {#if feed.posting.may_post && feed.posting.allowance?.remaining === 0}
@@ -123,7 +165,13 @@
 
 {#if posts.length === 0 && ownPending.length === 0}
 	<p class="panel-ticks mt-10 border border-line/60 bg-carbon/40 p-6 text-sm text-dim">
-		{#if feed.moderator && pending.length > 0}
+		{#if kind}
+			Nothing of that kind yet. <button
+				type="button"
+				class="underline decoration-ember/50 underline-offset-4 hover:text-ember"
+				onclick={() => show(null)}>Show everything</button
+			>
+		{:else if feed.moderator && pending.length > 0}
 			Nothing published yet — the queue above is waiting for your review.
 		{:else}
 			Nothing published yet. The first post could be yours.

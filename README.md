@@ -169,6 +169,7 @@ read-only, hence the writable default.
 | `/api/news?limit=&offset=` | Published posts, plus whether *you* may submit |
 | `/api/news/posting-rules` | Per-kind form hints, limits, and *your* remaining allowance |
 | `/api/news/mine` | Your own submissions and their moderation state |
+| `/api/news?kind=new\|update\|article\|video` | The feed narrowed to one kind — how someone who only wants server updates reads it |
 | `/api/news/queue` | Pending submissions — `news_moderator` only |
 | `/api/news` (`POST`) | Submit a post. Always lands pending; rate limited per account |
 | `/api/news/{id}` (`PATCH`) | Edit your own entry, while it is pending only |
@@ -255,7 +256,7 @@ that will be refused. The refusal message names the limit and the time, and does
 not suggest asking a moderator — they cannot change it.
 
 **Each kind asks for only what it needs.** `news`, `update` and `article` take a
-title, a summary and a Markdown body. `video` takes YouTube links and nothing
+title and a Markdown body. `video` takes YouTube links and nothing
 else — no invented title, no empty body — up to six per post, laid out two to a
 row on a wide screen. `guide` is not a news kind: guides and builds have their
 own section (`/guides`, `/builds`), and approving one writes an announcement into
