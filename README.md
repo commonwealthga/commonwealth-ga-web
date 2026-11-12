@@ -170,6 +170,7 @@ read-only, hence the writable default.
 | `/api/news/{id}` (`PATCH`) | Edit your own entry, while it is pending only |
 | `/api/news/{id}/approve`, `/api/news/{id}/reject` | Moderate. Rejecting requires a note — `news_moderator` only |
 | `/api/news/{id}/unapprove` | Unpublish for a fix, with a note the author sees — `news_moderator` only |
+| `/api/news/{id}/note` | Add that note to a pending entry without deciding it — `news_moderator` only |
 | `/api/news/{id}/thumb` | Toggle your thumbs-up |
 | `/api/news/preview`, `/api/news/posting-rules` | Editor support: the rendered body and the rules the form must respect |
 
@@ -275,9 +276,12 @@ the author then fixes it and it is reviewed again.
 
 **Moderation happens on the feed.** `/news` renders the pending queue at the top
 for anyone with `news_moderator`, and every entry carries the actions for its
-state: **Approve** / **Reject** while pending, **Unpublish** / **Delete** once
-published. Every button asks for confirmation first, and the two that take an
-entry out of the feed also ask for a reason. There is no
+state: **Approve** / **Request changes** / **Reject** while pending,
+**Unpublish** / **Delete** once published. Every button that decides an entry's
+fate asks for confirmation first, and the ones that take it out of the feed —
+plus Request changes — ask for a reason, which the author sees on the entry.
+Requesting changes leaves the entry exactly where it is; approving clears any
+note, so a published entry never still says "please fix". There is no
 separate admin page to remember. An author sees their own unpublished posts in
 the same feed, labelled `Waiting for review` — they are the only other person who
 can see them.

@@ -131,7 +131,8 @@
 
 	var REASON = {
 		unapprove: 'What should the author fix? (shown to them)',
-		reject: 'Why is this being deleted? (kept with the entry)'
+		reject: 'Why is this being deleted? (kept with the entry)',
+		note: 'What should the author change? (shown to them; the entry stays in the queue)'
 	};
 
 	document.querySelectorAll('[data-action]').forEach(function (button) {
@@ -149,9 +150,12 @@
 		button.addEventListener('click', function () {
 			var action = button.dataset.action;
 
-			// Confirm first: it is the answer to "did you mean that", and it is
-			// mandatory for every one of these buttons.
-			if (!window.confirm('About to ' + CONFIRM[action] + '\n\n"' + title + '"')) return;
+			// Confirm first for anything that decides the entry's fate. Writing a
+			// note decides nothing, and the prompt below is already a deliberate
+			// step, so it skips the confirmation.
+			if (CONFIRM[action] && !window.confirm('About to ' + CONFIRM[action] + '\n\n"' + title + '"')) {
+				return;
+			}
 
 			var note = '';
 			if (REASON[action]) {

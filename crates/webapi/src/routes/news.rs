@@ -552,6 +552,54 @@ pub async fn update(
     .into_response())
 }
 
+/// `POST /api/news/{id}/note` — tell the author what to fix, without deciding.
+///
+/// The same reason an unpublish carries, for an entry that has not been published
+/// yet. Nothing changes state: it stays in the queue, and the author sees the
+/// note on their entry and can edit it.
+pub async fn note(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Json(body): Json<NoteBody>,
+) -> ApiResult<Response> {
+    let site = site_pool(&state)?;
+    let viewer = viewer(&state, &headers).await?;
+    let moderator = viewer.moderator()?;
+
+    let note = store::validate_note(&body.note)
+        .map_err(|message| AppError::BadRequest(message.to_string()))?;
+    let now = now_unix();
+
+    let changed = store::annotate(site, id, moderator.user_id, &moderator.username, &note, now)
+        .await
+        .map_err(internal)?;
+    if !changed {
+        // An approved entry is annotated by unpublishing it; a rejected one is
+        // gone. Either way there is nothing to say here.
+        return Err(AppError::NotFound("pending post".to_string()));
+    }
+    store::audit(
+        site,
+        Some(id),
+        Some(moderator.user_id),
+        &moderator.username,
+        "note",
+        &note,
+        now,
+    )
+    .await
+    .map_err(internal)?;
+
+    tracing::info!(
+        post_id = id,
+        moderator = %moderator.username,
+        note = %note,
+        "note added to a pending news post"
+    );
+    Ok(Json(serde_json::json!({ "id": id, "status": Status::Pending.as_str() })).into_response())
+}
+
 /// `POST /api/news/{id}/unapprove` — take a published post back for a fix.
 ///
 /// The note is required because it is the only thing telling the author what to

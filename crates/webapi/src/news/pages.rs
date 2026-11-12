@@ -563,11 +563,20 @@ fn moderator_tools(pending: bool) -> String {
     let first_label = if pending { "Approve" } else { "Unpublish" };
     let second_label = if pending { "Reject" } else { "Delete" };
 
+    // A note on something still in the queue: the author is told what to fix
+    // without the entry being published and unpublished to say it.
+    let note = if pending {
+        "<button type=\"button\" data-action=\"note\" class=\"heading border border-amber/50 px-3 py-1.5 text-xs tracking-[0.1em] text-amber transition-colors hover:bg-amber hover:text-void\">Request changes</button>"
+    } else {
+        ""
+    };
+
     format!(
         "<div class=\"mt-4 flex flex-wrap items-center gap-2 border-t border-line/60 pt-3\">\
 <span class=\"label text-faint\">Moderator</span>\
 <button type=\"button\" data-action=\"{first}\" class=\"heading border border-ember/60 px-3 py-1.5 text-xs tracking-[0.1em] text-ember transition-colors hover:bg-ember hover:text-void\">{first_label}</button>\
 <button type=\"button\" data-action=\"{second}\" class=\"heading border border-line/70 px-3 py-1.5 text-xs tracking-[0.1em] text-dim transition-colors hover:border-red/60 hover:text-ink\">{second_label}</button>\
+{note}\
 <span class=\"label text-faint\" data-message></span>\
 </div>"
     )
@@ -1097,6 +1106,42 @@ mod tests {
         };
         let page = feed(&data, &Chrome::default(), &styles(), BASE);
         assert!(!page.contains("data-action="), "{page}");
+    }
+
+    #[test]
+    fn a_pending_entry_can_be_annotated_without_being_decided() {
+        let reacted = HashSet::new();
+        let pending = FeedData {
+            approved: &[],
+            pending: &[pending_article()],
+            moderator: true,
+            reacted: &reacted,
+            hint: hint(),
+            viewer_id: None,
+            offset: 0,
+            total: 0,
+        };
+        let page = feed(&pending, &Chrome::default(), &styles(), BASE);
+        assert!(
+            page.contains("data-action=\"note\""),
+            "requesting a change without publishing anything: {page}"
+        );
+        assert!(page.contains("Request changes"));
+
+        // Once it is published, the same need is served by unpublishing.
+        let approved = FeedData {
+            approved: &[article()],
+            pending: &[],
+            moderator: true,
+            reacted: &reacted,
+            hint: hint(),
+            viewer_id: None,
+            offset: 0,
+            total: 1,
+        };
+        let page = feed(&approved, &Chrome::default(), &styles(), BASE);
+        assert!(!page.contains("data-action=\"note\""), "{page}");
+        assert!(page.contains("data-action=\"unapprove\""));
     }
 
     #[test]

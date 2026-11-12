@@ -806,6 +806,156 @@ async fn a_moderator_can_unpublish_a_post_so_its_author_can_fix_it() {
 }
 
 #[tokio::test]
+async fn a_note_can_be_added_without_publishing_anything() {
+    let harness = Harness::new().await;
+    let live = harness
+        .live_with_roles(&[(1, access::ROLE_MODERATOR)])
+        .await;
+    let app = harness.router(Some(live), PostingMode::Open);
+    let author = harness.session(7, "Agent07").await;
+    let moderator = harness.session(1, "ModOne").await;
+
+    let (_, body) = send(&app, submit_request(Some(&author), post_payload())).await;
+    let id = json(&body)["id"].as_i64().expect("id");
+
+    // A note with nothing in it is not a note.
+    let (status, body) = send(
+        &app,
+        action_request(
+            &moderator,
+            &format!("/api/news/{id}/note"),
+            serde_json::json!({ "note": "  " }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+    let (status, body) = send(
+        &app,
+        action_request(
+            &moderator,
+            &format!("/api/news/{id}/note"),
+            serde_json::json!({ "note": "The date is wrong: it was the 19th, not the 12th." }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // Nothing was published, nothing was rejected: it is still in the queue.
+    let post = store::by_id(&harness.site, id)
+        .await
+        .expect("lookup")
+        .expect("kept");
+    assert_eq!(post.status, webapi::news::Status::Pending);
+    assert_eq!(
+        post.moderation_note.as_deref(),
+        Some("The date is wrong: it was the 19th, not the 12th.")
+    );
+    let (_, feed) = send(&app, get(None, "/api/news")).await;
+    assert_eq!(json(&feed)["posts"].as_array().expect("posts").len(), 0);
+    let (_, queue) = send(&app, get(Some(&moderator), "/api/news/queue")).await;
+    assert_eq!(json(&queue)["posts"].as_array().expect("queue").len(), 1);
+
+    // The author sees the reason and can act on it.
+    let (_, mine) = send(&app, get(Some(&author), "/api/news/mine")).await;
+    let mine = json(&mine);
+    assert_eq!(
+        mine["posts"][0]["moderation_note"],
+        "The date is wrong: it was the 19th, not the 12th."
+    );
+
+    // Editing keeps the note until the entry is approved.
+    let request = Request::builder()
+        .method("PATCH")
+        .uri(format!("/api/news/{id}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::COOKIE, format!("cw_session={author}"))
+        .body(Body::from(
+            serde_json::json!({
+                "kind": "article",
+                "title": "How to solo the Surfside bunker",
+                "body": "## Prep\n\nBring **two** medkits."
+            })
+            .to_string(),
+        ))
+        .expect("request");
+    send(&app, request).await;
+
+    // Approving it clears the note: a published entry must not still be asking
+    // for a change.
+    let (status, _) = send(
+        &app,
+        action_request(
+            &moderator,
+            &format!("/api/news/{id}/approve"),
+            serde_json::json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let post = store::by_id(&harness.site, id)
+        .await
+        .expect("lookup")
+        .expect("kept");
+    assert_eq!(post.status, webapi::news::Status::Approved);
+    assert_eq!(
+        post.moderation_note, None,
+        "the note went with the approval"
+    );
+
+    // The trail has the note, the edit and the approval.
+    let trail = store::audit_for(&harness.site, id).await.expect("audit");
+    let actions: Vec<&str> = trail.iter().map(|entry| entry.action.as_str()).collect();
+    assert_eq!(actions, vec!["note", "edit", "approve"]);
+}
+
+#[tokio::test]
+async fn only_a_moderator_can_add_a_note_and_only_to_a_pending_entry() {
+    let harness = Harness::new().await;
+    let live = harness
+        .live_with_roles(&[(1, access::ROLE_MODERATOR)])
+        .await;
+    let app = harness.router(Some(live), PostingMode::Open);
+    let author = harness.session(7, "Agent07").await;
+    let moderator = harness.session(1, "ModOne").await;
+
+    let (_, body) = send(&app, submit_request(Some(&author), post_payload())).await;
+    let id = json(&body)["id"].as_i64().expect("id");
+
+    let (status, _) = send(
+        &app,
+        action_request(
+            &author,
+            &format!("/api/news/{id}/note"),
+            serde_json::json!({ "note": "annotating my own post" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // Approved entries are handled by unpublishing, not by annotating.
+    send(
+        &app,
+        action_request(
+            &moderator,
+            &format!("/api/news/{id}/approve"),
+            serde_json::json!({}),
+        ),
+    )
+    .await;
+    let (status, _) = send(
+        &app,
+        action_request(
+            &moderator,
+            &format!("/api/news/{id}/note"),
+            serde_json::json!({ "note": "too late" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn only_a_moderator_can_unpublish() {
     let harness = Harness::new().await;
     let live = harness

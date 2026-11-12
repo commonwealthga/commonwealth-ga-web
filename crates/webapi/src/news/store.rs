@@ -381,7 +381,8 @@ pub async fn approve(
 ) -> sqlx::Result<bool> {
     let result = sqlx::query(
         "UPDATE news_posts
-         SET status = ?, reviewed_by_id = ?, reviewed_by_name = ?, reviewed_at = ?
+         SET status = ?, reviewed_by_id = ?, reviewed_by_name = ?, reviewed_at = ?,
+             moderation_note = NULL
          WHERE id = ? AND status = ?",
     )
     .bind(Status::Approved.as_str())
@@ -463,6 +464,35 @@ pub async fn update_pending(
         attach_videos(pool, id, &entry.videos).await?;
     }
     Ok(changed)
+}
+
+/// Attach a note to a post that is still in the queue, without deciding it.
+///
+/// The same note an unpublish carries, for the case where the entry never went
+/// live: "this needs a date"/"the link is broken". The post stays pending and the
+/// author sees the note on their entry.
+pub async fn annotate(
+    pool: &SqlitePool,
+    id: i64,
+    reviewer_id: i64,
+    reviewer_name: &str,
+    note: &str,
+    now: i64,
+) -> sqlx::Result<bool> {
+    let result = sqlx::query(
+        "UPDATE news_posts
+         SET moderation_note = ?, reviewed_by_id = ?, reviewed_by_name = ?, reviewed_at = ?
+         WHERE id = ? AND status = ?",
+    )
+    .bind(note)
+    .bind(reviewer_id)
+    .bind(reviewer_name)
+    .bind(now)
+    .bind(id)
+    .bind(Status::Pending.as_str())
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
 }
 
 /// Take a published post back out of the feed, into the queue, with a note for
