@@ -26,7 +26,7 @@
 {#if user}
 	<a
 		href="/me"
-		class="label flex items-center gap-2 border border-ember/50 bg-ember/10 px-2.5 py-1.5 text-ember transition-colors hover:bg-ember/20"
+		class="label flex items-center gap-2 whitespace-nowrap border border-ember/50 bg-ember/10 px-2.5 py-1.5 text-ember transition-colors hover:bg-ember/20"
 		title="Your player page"
 	>
 		<span class="size-1 rounded-full bg-ember"></span>
@@ -35,7 +35,7 @@
 {:else}
 	<a
 		href="/login"
-		class="label border border-line-hi px-2.5 py-1.5 text-dim transition-colors hover:border-ember/60 hover:text-ink"
+		class="label whitespace-nowrap border border-line-hi px-2.5 py-1.5 text-dim transition-colors hover:border-ember/60 hover:text-ink"
 	>
 		Sign in
 	</a>
