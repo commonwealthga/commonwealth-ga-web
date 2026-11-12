@@ -124,6 +124,8 @@ CI runs exactly these (`.github/workflows/ci.yml`).
 | `WEB_DB_SNAPSHOT` | — | Published snapshot; every statistics query reads it |
 | `WEB_SNAPSHOT_INTERVAL_SECS` | `300` | How often the snapshotter republishes |
 | `WEB_DB_EXPORT_TOKEN` | — | Path token for `/db-export/<token>`; unset disables the route |
+| `WEB_NEWS_POSTING_MODE` | `open` | Who may submit news: `open` or `allowlisted` (holders of `news_allowlisted` only). Anything else refuses to start |
+| `WEB_SITE_URL` | `https://commonwealth.ydns.eu` | Absolute base for canonical links and the sitemap |
 | `WEB_DB_SITE` | — | Website-owned read-write DB |
 | `WEB_STATIC_DIR` | `web/build` | Built frontend |
 | `WEB_FILES_DIR` | `files` | Downloads served under `/files/*` |
@@ -156,6 +158,15 @@ read-only, hence the writable default.
 | `/api/me/settings` | Your toggles (`GET`) and changes to them (`POST`), relayed to the control server |
 | `/api/me/settings/dlc` | Mark a DLC map pack installed/uninstalled (`POST`) |
 | `/db-export/<token>` | Redacted database download for third parties (the cards registry). Disabled unless `WEB_DB_EXPORT_TOKEN` is set |
+| `/news`, `/news/{id}-{slug}` | **Server-rendered HTML**, not JSON: the news feed and post pages, with canonical links, Open Graph tags and `Article` structured data. Crawlable because they cannot be prerendered |
+| `/sitemap.xml` | Generated: the static pages plus every published post. Served as `application/xml` |
+| `/api/news?limit=&offset=` | Published posts, plus whether *you* may submit |
+| `/api/news/mine` | Your own submissions and their moderation state |
+| `/api/news/queue` | Pending submissions — `news_moderator` only |
+| `/api/news` (`POST`) | Submit a post. Always lands pending; rate limited per account |
+| `/api/news/{id}/approve`, `/api/news/{id}/reject` | Moderate. Rejecting requires a note — `news_moderator` only |
+| `/api/news/{id}/thumb` | Toggle your thumbs-up |
+| `/api/news/preview`, `/api/news/posting-rules` | Editor support: the rendered body and the rules the form must respect |
 
 Player settings (`/settings`) need the control server's endpoint: set
 `WEB_CONTROL_API_URL` (e.g. `http://control.internal:19020`) and
@@ -201,6 +212,45 @@ and a long download can resume. Dotfiles, `..` and other unsafe paths are 404s.
 # locally: the repository's own files/ directory
 cp surfside-atoll.zip files/ && curl -I http://127.0.0.1:8080/files/surfside-atoll.zip
 ```
+
+## News
+
+A community feed with pre-moderation: anyone signed in may submit, and nothing
+appears on the site until a moderator approves it. Posts live in `site.db`
+(`news_posts`, `news_reactions`, `news_audit`) — never in the game database.
+
+**Roles** are `ga_user_roles` rows, the same table that gates `spectator`, and
+this service only ever **reads** them. They are granted in the dashboard, which
+goes through the control server's token-gated `set-role` action; the website
+deliberately holds no admin token.
+
+| Role | Effect |
+|---|---|
+| `news_moderator` | Sees `/news/queue`; may approve and reject |
+| `news_restricted` | May not submit, whatever the posting mode |
+| `news_allowlisted` | May submit while `WEB_NEWS_POSTING_MODE=allowlisted` |
+
+Closing posting to everyone but an allowlist is a repository variable change
+(`WEB_NEWS_POSTING_MODE=allowlisted`) plus a deploy — see the RUNBOOK.
+
+**Rejection is the soft delete.** The row keeps its body, author, Markdown and
+the moderator's note; it disappears from the feed, the queue, the author's own
+list and the sitemap. Moderators can still open it by id for review. Rejection is
+final: a second reject or a re-approve is refused rather than overwriting the
+record.
+
+**Post bodies are a Markdown subset** rendered by `news::markdown` to HTML it
+writes itself — raw HTML is escaped and shown rather than interpreted, images are
+dropped, links are limited to `http(s)`/`mailto`/site-relative and marked
+`nofollow ugc`. The rendered HTML is stored at submission, so what a moderator
+approves is exactly what is served, and a preview cannot disagree with the
+published page.
+
+**Why the pages are rendered in Rust** rather than SvelteKit: the frontend is
+`adapter-static`, which cannot serve a post written after the build, and an app
+shell is invisible to a crawler. The cost is that the site chrome is duplicated
+in `news::pages`, which a test guards by reading `Nav.svelte` and failing if the
+links diverge.
 
 ## Invariants
 

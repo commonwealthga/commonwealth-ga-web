@@ -36,6 +36,12 @@ services:
       # readable but not writable. Production fills this from the override.
       WEB_CONTROL_API_URL: "${WEB_CONTROL_API_URL:-}"
       WEB_CONTROL_API_TOKEN: "${WEB_CONTROL_API_TOKEN:-}"
+      # News: `open` (anyone signed in may submit) or `allowlisted` (only
+      # holders of the news_allowlisted role). Everything is moderated either
+      # way; this only decides who may reach the queue.
+      WEB_NEWS_POSTING_MODE: "${WEB_NEWS_POSTING_MODE:-open}"
+      # Absolute base for canonical links and the sitemap.
+      WEB_SITE_URL: "${WEB_SITE_URL:-https://commonwealth.ydns.eu}"
       WEB_STATUS_TTL_SECS: "60"
       WEB_LIVE_TICK_SECS: "15"
       RUST_LOG: ${RUST_LOG:-info,tower_http=warn}

@@ -18,6 +18,7 @@ pub mod mmr;
 pub mod news;
 pub mod routes;
 pub mod settings;
+pub mod sitemap;
 pub mod snapshot;
 pub mod status;
 
@@ -73,6 +74,9 @@ pub struct AppState {
     pub site_pool: Option<SqlitePool>,
     /// Fan-out for `/api/live`.
     pub events: broadcast::Sender<String>,
+    /// Stylesheets from the frontend build, for the server-rendered news pages.
+    /// Resolved once at startup: a new build arrives with a new container.
+    pub stylesheets: Vec<String>,
 }
 
 impl AppState {
@@ -131,6 +135,7 @@ impl AppState {
         site_pool: Option<SqlitePool>,
     ) -> Arc<Self> {
         let (events, _) = broadcast::channel(EVENT_BUFFER);
+        let stylesheets = find_stylesheets(&cfg.static_dir);
         let control_addr = cfg.control_addr();
         let status = StatusService::new(
             live_pool.clone(),
@@ -155,8 +160,28 @@ impl AppState {
             snapshot,
             site_pool,
             events,
+            stylesheets,
         })
     }
+}
+
+/// Every CSS file the frontend build emitted, as URL paths.
+///
+/// SvelteKit content-hashes asset names, so the news pages cannot hard-code one;
+/// a long cache is safe precisely because the name changes with the content.
+fn find_stylesheets(static_dir: &Path) -> Vec<String> {
+    let dir = static_dir.join("_app/immutable/assets");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut found: Vec<String> = entries
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "css"))
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .map(|name| format!("/_app/immutable/assets/{name}"))
+        .collect();
+    found.sort();
+    found
 }
 
 /// Assemble the full router: API routes first, then the static frontend with
@@ -190,6 +215,14 @@ pub fn app(state: Arc<AppState>) -> Router {
         // The bare path must not fall through to the app shell: a stranger
         // poking at it should get "no such thing", not a web page.
         .route("/db-export", axum::routing::get(export::no_token))
+        // Server-rendered pages, so a post written this morning is crawlable
+        // this morning (the SvelteKit build is static).
+        .route("/news", axum::routing::get(routes::pages::feed))
+        .route("/news/{*rest}", axum::routing::get(routes::pages::post))
+        .route(
+            "/sitemap.xml",
+            axum::routing::get(routes::pages::sitemap_xml),
+        )
         .route("/db-export/", axum::routing::get(export::no_token))
         .fallback_service(assets)
         .layer(from_fn_with_state(Arc::clone(&state), html_suffix))

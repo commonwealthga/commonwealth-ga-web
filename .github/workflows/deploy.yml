@@ -199,8 +199,15 @@ jobs:
           test -n "${WEB_CONTROL_API_TOKEN}" || \
             echo "::warning::WEB_CONTROL_API_TOKEN is empty — the player-settings page will be read-only."
           test -n "${WEB_DB_EXPORT_TOKEN}" || \
-            echo "::warning::WEB_DB_EXPORT_TOKEN is empty — /db-export/<token> will 404." 
-          envsubst '${WEB_UID} ${WEB_GID} ${WEB_DATA_HOME} ${WEB_CONTROL_API_URL} ${WEB_CONTROL_API_TOKEN} ${WEB_DB_EXPORT_TOKEN}' \
+            echo "::warning::WEB_DB_EXPORT_TOKEN is empty — /db-export/<token> will 404."
+          # A typo here stops the web container from starting, on purpose: the
+          # alternative is silently opening posting when the operator meant to
+          # close it.
+          case "${WEB_NEWS_POSTING_MODE:-open}" in
+            open|allowlisted) ;;
+            *) echo "::error::WEB_NEWS_POSTING_MODE must be 'open' or 'allowlisted'."; exit 1 ;;
+          esac 
+          envsubst '${WEB_UID} ${WEB_GID} ${WEB_DATA_HOME} ${WEB_CONTROL_API_URL} ${WEB_CONTROL_API_TOKEN} ${WEB_DB_EXPORT_TOKEN} ${WEB_NEWS_POSTING_MODE} ${WEB_SITE_URL}' \
             < deploy/docker-compose.override.template.yml \
             > /tmp/docker-compose.override.yml
         env:
@@ -215,6 +222,9 @@ jobs:
           WEB_CONTROL_API_URL: ${{ vars.WEB_CONTROL_API_URL }}
           WEB_CONTROL_API_TOKEN: ${{ secrets.WEB_CONTROL_API_TOKEN }}
           WEB_DB_EXPORT_TOKEN: ${{ secrets.WEB_DB_EXPORT_TOKEN }}
+          # Who may submit news. Repository variables, not secrets.
+          WEB_NEWS_POSTING_MODE: ${{ vars.WEB_NEWS_POSTING_MODE }}
+          WEB_SITE_URL: ${{ vars.WEB_SITE_URL || 'https://commonwealth.ydns.eu' }}
 
       - name: Upload release and switch over
         if: ${{ !startsWith(inputs.deploy, 'previous') }}

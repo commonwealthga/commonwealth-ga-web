@@ -13,7 +13,8 @@
 		{ href: '/community', label: 'Community' },
 		{ href: '/events', label: 'Events' },
 		{ href: '/agents', label: 'Agents' },
-		{ href: '/missions', label: 'Missions' }
+		{ href: '/missions', label: 'Missions' },
+		{ href: '/news', label: 'News' }
 	];
 
 	const active = (href: string) => page.url.pathname.startsWith(href);

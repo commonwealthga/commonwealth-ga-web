@@ -37,7 +37,3 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run check
       - run: npm run build
-      # The sitemap is static and hand-written, so nothing else would notice a
-      # typo that makes it unreadable to crawlers.
-      - run: python3 scripts/check-sitemap.py
-        working-directory: .

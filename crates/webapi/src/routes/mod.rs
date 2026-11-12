@@ -31,6 +31,7 @@ pub mod auth;
 pub mod history;
 pub mod matches;
 pub mod news;
+pub mod pages;
 pub mod settings;
 pub mod status;
 
@@ -55,6 +56,7 @@ pub fn api() -> Router<Arc<AppState>> {
         .route("/news/queue", get(news::queue))
         .route("/news/mine", get(news::mine))
         .route("/news/preview", post(news::preview))
+        .route("/news/posting-rules", get(pages::posting_rules))
         .route("/news/{id}", get(news::detail))
         .route("/news/{id}/approve", post(news::approve))
         .route("/news/{id}/reject", post(news::reject))

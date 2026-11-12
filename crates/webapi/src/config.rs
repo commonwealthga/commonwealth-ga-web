@@ -46,6 +46,10 @@ pub struct Config {
     /// Shared token for that endpoint. Never in the repo: it travels the same
     /// way the db-export token does, through the deploy-time override.
     pub control_api_token: Option<String>,
+    /// Absolute base URL of the site, e.g. `https://commonwealth.ydns.eu`.
+    /// Needed for the canonical links and the sitemap, which cannot be
+    /// relative. `WEB_SITE_URL`.
+    pub site_url: String,
     /// Whether anyone may submit news, or only accounts on the allowlist.
     /// `WEB_NEWS_POSTING_MODE`: `open` (default) or `allowlisted`.
     pub news_posting_mode: crate::news::PostingMode,
@@ -95,6 +99,9 @@ impl Config {
             control_api_url: env_opt("WEB_CONTROL_API_URL"),
             control_api_token: env_opt("WEB_CONTROL_API_TOKEN"),
             db_export_token: env_opt("WEB_DB_EXPORT_TOKEN"),
+            site_url: env("WEB_SITE_URL", "https://commonwealth.ydns.eu")
+                .trim_end_matches('/')
+                .to_string(),
             news_posting_mode: crate::news::PostingMode::parse(&env(
                 "WEB_NEWS_POSTING_MODE",
                 "open",

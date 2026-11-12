@@ -90,6 +90,7 @@ impl Harness {
             control_api_token: None,
             db_export_token: None,
             news_posting_mode: mode,
+            site_url: "https://example.test".to_string(),
         };
         app(AppState::new(cfg, live, None, Some(self.site.clone())))
     }

@@ -30,6 +30,7 @@ async fn harness(dir: &TempDir) -> (axum::Router, PathBuf) {
         control_api_token: None,
         db_export_token: None,
         news_posting_mode: webapi::news::PostingMode::Open,
+        site_url: "https://example.test".to_string(),
     };
     let state = AppState::new(cfg, None, None, None);
     (app(state), files)

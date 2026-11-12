@@ -24,6 +24,11 @@ services:
       WEB_CONTROL_API_TOKEN: "${WEB_CONTROL_API_TOKEN}"
       # Token in the path of /db-export/<token>. Empty disables the route.
       WEB_DB_EXPORT_TOKEN: "${WEB_DB_EXPORT_TOKEN}"
+      # Who may submit news: `open` (default) or `allowlisted`. Flipping this and
+      # running the deploy is the whole procedure for closing posting.
+      WEB_NEWS_POSTING_MODE: "${WEB_NEWS_POSTING_MODE}"
+      # Absolute base URL, for canonicals and the sitemap.
+      WEB_SITE_URL: "${WEB_SITE_URL}"
     # uid/gid of the account that owns ${WEB_DATA_HOME}/games on the VPS.
     user: "${WEB_UID}:${WEB_GID}"
     volumes:

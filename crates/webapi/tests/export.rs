@@ -67,6 +67,7 @@ impl Harness {
             control_api_token: None,
             db_export_token: token.map(str::to_string),
             news_posting_mode: webapi::news::PostingMode::Open,
+            site_url: "https://example.test".to_string(),
         };
         app(AppState::new(cfg, Some(pool), None, None))
     }

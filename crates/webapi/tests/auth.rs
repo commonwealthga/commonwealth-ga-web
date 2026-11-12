@@ -174,6 +174,7 @@ impl Harness {
             control_api_token: None,
             db_export_token: None,
             news_posting_mode: webapi::news::PostingMode::Open,
+            site_url: "https://example.test".to_string(),
         };
 
         Fixtures {
@@ -417,6 +418,7 @@ async fn online_history_returns_parallel_arrays() {
         control_api_token: None,
         db_export_token: None,
         news_posting_mode: webapi::news::PostingMode::Open,
+        site_url: "https://example.test".to_string(),
     };
     let app = app(AppState::new(cfg, Some(pool), None, None));
 
@@ -484,6 +486,7 @@ async fn activity_window_zero_returns_everything() {
         control_api_token: None,
         db_export_token: None,
         news_posting_mode: webapi::news::PostingMode::Open,
+        site_url: "https://example.test".to_string(),
     };
     let app = app(AppState::new(cfg, Some(pool), None, None));
 

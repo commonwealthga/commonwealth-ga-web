@@ -47,6 +47,7 @@ fn router(dir: &TempDir) -> Router {
         control_api_token: None,
         db_export_token: None,
         news_posting_mode: webapi::news::PostingMode::Open,
+        site_url: "https://example.test".to_string(),
     };
     app(AppState::new(cfg, None, None, None))
 }

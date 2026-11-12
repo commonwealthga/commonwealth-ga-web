@@ -177,6 +177,40 @@ added here must do the same, or be behind Caddy.
 `--dry-run` exercises the webroot path through Caddy. It fails if the edge is
 down or its `http://:80` block is missing, which is the point.
 
+## Moderating news
+
+Grant the role first, in the dashboard (users page → Roles) or directly:
+
+```bash
+# READ-ONLY check of who has it
+docker exec commonwealth-ga-web-web-1 true   # (no shell in the image; use the host)
+sqlite3 ~/games/server.db "SELECT u.username, r.role FROM ga_user_roles r
+  JOIN ga_users u ON u.id = r.user_id ORDER BY r.role;"
+```
+
+Then the moderator works at `https://commonwealth.ydns.eu/news/queue`: approve is
+one click, reject demands a note. Every decision is written to `news_audit`.
+
+**Reading a rejected post** — the content is kept on purpose:
+
+```bash
+sqlite3 ~/website/site-data/site.db \
+  "SELECT id, title, author_name, reviewed_by_name, moderation_note, created_at
+     FROM news_posts WHERE status = 'rejected' ORDER BY reviewed_at DESC LIMIT 20;"
+
+# The full trail for one post, and its body
+sqlite3 ~/website/site-data/site.db \
+  "SELECT action, actor_name, note, datetime(created_at,'unixepoch') FROM news_audit
+     WHERE post_id = 42 ORDER BY created_at;"
+sqlite3 ~/website/site-data/site.db "SELECT body_markdown FROM news_posts WHERE id = 42;"
+```
+
+**Closing posting** (bots, a flood): set the repository variable
+`WEB_NEWS_POSTING_MODE=allowlisted` and run the deploy. Only `news_allowlisted`
+accounts may submit afterwards; existing posts are unaffected. Set it back to
+`open` and deploy to reopen. To stop one account instead, grant it
+`news_restricted` in the dashboard — no deploy needed.
+
 ## The dashboard
 
 `~/dashboard` runs compose project `dashboard` (container `ga-dashboard`, port

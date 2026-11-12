@@ -19,6 +19,7 @@
 
 pub mod access;
 pub mod markdown;
+pub mod pages;
 pub mod store;
 
 use std::fmt;

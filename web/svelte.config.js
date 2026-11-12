@@ -27,10 +27,18 @@ const config = {
 			relative: false
 		},
 		prerender: {
+			// Reached only from the server-rendered news feed, so the build-time
+			// crawl from `/` does not find them.
+			entries: ['*', '/news/submit', '/news/queue'],
 			// Pages are crawled at build time, when there is no API to answer for
 			// them. The API is a runtime surface, not part of the static build.
 			handleHttpError: ({ path, message }) => {
 				if (path.startsWith('/api/')) return;
+				// The news feed and post pages are rendered by the Rust server,
+				// so they can carry posts written after this build. The nav links
+				// to /news, so the crawl reaches it and finds no prerendered file.
+				// `/news/submit` and `/news/queue` are real pages and are built.
+				if (path === '/news' || /^\/news\/\d+/.test(path)) return;
 				throw new Error(message);
 			}
 		}
