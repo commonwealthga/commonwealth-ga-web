@@ -49,4 +49,9 @@ EXPOSE 8080 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8080/api/health || exit 1
 
-ENTRYPOINT ["/usr/local/bin/webapi"]
+# No ENTRYPOINT, deliberately. One image runs three processes (see
+# docker-compose.yml): the API, the site, and the snapshot job. An entrypoint
+# would win over the compose `command` that picks between them — the site's
+# service would quietly start a second API on the wrong port instead. So the
+# default command is the API, and every service names its own.
+CMD ["/usr/local/bin/webapi"]

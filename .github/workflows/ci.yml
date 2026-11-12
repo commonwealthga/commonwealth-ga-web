@@ -40,3 +40,24 @@ jobs:
       # The site is server-rendered now: a build that produced no server is a
       # build that cannot serve a page.
       - run: test -f build/index.js
+
+  # The architecture's whole point is that a crawler reads the news from the HTML
+  # the server returns. That is worth asserting, not assuming: this builds both
+  # processes, seeds an entry, and greps the response.
+  ssr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build -p webapi --locked
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+      - run: ./scripts/smoke-ssr.sh

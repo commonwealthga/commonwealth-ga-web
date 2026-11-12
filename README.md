@@ -111,9 +111,14 @@ before shooting, and fails loudly if a capture comes back blank.
 cargo test                                  # contract tests, no DB or network needed
 cargo fmt --all --check && cargo clippy --all-targets -- -D warnings
 cd web && npm run check && npm run build
+./scripts/smoke-ssr.sh                      # both processes, one seeded entry
 ```
 
-CI runs exactly these (`.github/workflows/ci.yml`).
+CI runs exactly these (`.github/workflows/ci.yml`). The smoke test is the one
+that matters for the architecture: it seeds an approved entry, starts the built
+Node server against the API, and greps `/news` for that entry's title and body —
+proving the text is in the response rather than fetched afterwards by a browser.
+It needs a built `webapi` and `web/build` first; both jobs above produce them.
 
 ### Environment
 

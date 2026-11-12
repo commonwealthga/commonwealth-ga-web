@@ -21,6 +21,8 @@ services:
       dockerfile: Dockerfile
     image: ${WEB_IMAGE:-ghcr.io/commonwealthga/commonwealth-ga-web}:${WEB_IMAGE_TAG:-local}
     restart: unless-stopped
+    # The image ships three processes; each service names the one it wants.
+    command: ["/usr/local/bin/webapi"]
     # Match the owner of the mounted game DB so the read-only mount is readable
     # and `site.db` is writable. Overridable per deployment.
     user: "${WEB_UID:-1000}:${WEB_GID:-1000}"
@@ -93,11 +95,11 @@ services:
     profiles: ["snapshot"]
     image: ${WEB_IMAGE:-ghcr.io/commonwealthga/commonwealth-ga-web}:${WEB_IMAGE_TAG:-local}
     user: "${WEB_UID:-1000}:${WEB_GID:-1000}"
-    entrypoint: ["/usr/local/bin/snapshotter"]
+    command: ["/usr/local/bin/snapshotter"]
     restart: unless-stopped
-    # The image's healthcheck probes the web API's /api/health, which this
-    # entrypoint does not serve — left on, the container reports unhealthy for
-    # its whole life and the column stops meaning anything.
+    # The image's healthcheck probes the API's /api/health, which the snapshot
+    # job does not serve — left on, the container reports unhealthy for its whole
+    # life and the column stops meaning anything.
     healthcheck:
       disable: true
     environment:
