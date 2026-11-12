@@ -30,6 +30,7 @@ async fn activity(State(state): State<Arc<AppState>>) -> Response {
 pub mod auth;
 pub mod history;
 pub mod matches;
+pub mod news;
 pub mod settings;
 pub mod status;
 
@@ -49,6 +50,15 @@ pub fn api() -> Router<Arc<AppState>> {
         .route("/health", get(status::health))
         // Server-sent events: one-way live feed for the frontend.
         .route("/live", get(status::live))
+        // Community news: anyone signed in may submit; a moderator publishes.
+        .route("/news", get(news::feed).post(news::submit))
+        .route("/news/queue", get(news::queue))
+        .route("/news/mine", get(news::mine))
+        .route("/news/preview", post(news::preview))
+        .route("/news/{id}", get(news::detail))
+        .route("/news/{id}/approve", post(news::approve))
+        .route("/news/{id}/reject", post(news::reject))
+        .route("/news/{id}/thumb", post(news::thumb))
         // Newest completed missions, for the public archive.
         .route("/matches/recent", get(matches::recent))
         // One match in full: scoreboard, and the PvP rating context.

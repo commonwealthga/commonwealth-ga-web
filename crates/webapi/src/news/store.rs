@@ -268,6 +268,21 @@ pub async fn pending_by_author(pool: &SqlitePool, author_id: i64) -> sqlx::Resul
     Ok(rows.iter().map(row_to_post).collect())
 }
 
+/// One author's own submissions, newest first, excluding rejected ones: a
+/// rejection is a soft delete everywhere, including the author's list.
+pub async fn by_author(pool: &SqlitePool, author_id: i64, limit: i64) -> sqlx::Result<Vec<Post>> {
+    let rows = sqlx::query(&format!(
+        "{SELECT} WHERE p.author_id = ? AND p.status != ?
+         ORDER BY p.created_at DESC, p.id DESC LIMIT ?"
+    ))
+    .bind(author_id)
+    .bind(Status::Rejected.as_str())
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.iter().map(row_to_post).collect())
+}
+
 pub async fn approve(
     pool: &SqlitePool,
     id: i64,

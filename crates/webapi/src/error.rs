@@ -27,6 +27,9 @@ pub enum AppError {
     Forbidden(String),
     #[error("too many attempts, try again later")]
     TooManyAttempts,
+    /// A caller-specific budget, e.g. news submissions per day.
+    #[error("{0}")]
+    RateLimited(String),
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
@@ -46,6 +49,7 @@ impl AppError {
                 StatusCode::TOO_MANY_REQUESTS,
                 "too many attempts, try again later".to_string(),
             ),
+            AppError::RateLimited(what) => (StatusCode::TOO_MANY_REQUESTS, what.clone()),
             AppError::Internal(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal server error".to_string(),
