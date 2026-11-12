@@ -284,6 +284,11 @@ pub struct PostingHint {
     pub mode: &'static str,
     pub signed_in: bool,
     pub may_post: bool,
+    /// Submissions left today. `None` when the reader cannot post anyway.
+    pub remaining: Option<i64>,
+    pub limit: i64,
+    /// When the allowance refreshes.
+    pub resets_at: Option<i64>,
     pub reason: Option<String>,
 }
 
@@ -297,6 +302,9 @@ pub struct FeedData<'a> {
     /// Posts this reader has already thumbed up.
     pub reacted: &'a std::collections::HashSet<i64>,
     pub hint: PostingHint,
+    /// How many entries this page already holds, and how many are published.
+    pub offset: i64,
+    pub total: i64,
 }
 
 pub fn feed(data: &FeedData, chrome: &Chrome, stylesheets: &[String], base: &str) -> String {
@@ -343,6 +351,7 @@ pub fn feed(data: &FeedData, chrome: &Chrome, stylesheets: &[String], base: &str
             body.push_str(&card(post, data.reacted.contains(&post.id), false));
         }
         body.push_str("</ul>");
+        body.push_str(&more_control(data.offset + posts.len() as i64, data.total));
     }
 
     let meta = Meta {
@@ -360,12 +369,34 @@ pub fn feed(data: &FeedData, chrome: &Chrome, stylesheets: &[String], base: &str
 }
 
 fn posting_box(hint: &PostingHint) -> String {
+    if hint.may_post && hint.remaining == Some(0) {
+        // Showing the form when it cannot be used is a dead end; say when the
+        // allowance comes back instead.
+        let when = match hint.resets_at {
+            Some(at) => format!(" You can post again after {}.", super::clock_utc(at)),
+            None => String::new(),
+        };
+        return format!(
+            "<div class=\"panel-ticks mt-8 border border-amber/40 bg-carbon/40 p-4 text-sm text-dim\">\
+You have used all {} posts for today.{when}</div>",
+            hint.limit
+        );
+    }
+
     if hint.may_post {
-        return "<div class=\"panel-ticks mt-8 flex flex-wrap items-center gap-3 border border-line/60 bg-carbon/40 p-4\">\
-<a class=\"heading border border-ember/60 px-4 py-2 text-sm tracking-[0.1em] text-ember transition-colors hover:bg-ember hover:text-void\" href=\"/news/submit\">Write a post</a>\
+        let left = match hint.remaining {
+            Some(remaining) => format!(
+                "<span class=\"label text-faint\">{remaining} of {} left today</span>",
+                hint.limit
+            ),
+            None => String::new(),
+        };
+        return format!(
+            "<div class=\"panel-ticks mt-8 flex flex-wrap items-center gap-3 border border-line/60 bg-carbon/40 p-4\">\
+<a class=\"heading border border-ember/60 px-4 py-2 text-sm tracking-[0.1em] text-ember transition-colors hover:bg-ember hover:text-void\" href=\"/news/submit\">Post news</a>\
 <span class=\"label text-faint\">Reviewed by a moderator before it goes live</span>\
-</div>"
-            .to_string();
+{left}</div>"
+        );
     }
 
     let reason = hint
@@ -380,6 +411,29 @@ fn posting_box(hint: &PostingHint) -> String {
     format!(
         "<div class=\"panel-ticks mt-8 border border-line/60 bg-carbon/40 p-4 text-sm text-dim\">{}{action}</div>",
         escape(reason)
+    )
+}
+
+/// The first batch's cards, as the fragment route returns them.
+pub fn cards(posts: &[Post], reacted: &std::collections::HashSet<i64>) -> String {
+    let mut out = String::new();
+    for post in posts {
+        out.push_str(&card(post, reacted.contains(&post.id), false));
+    }
+    out
+}
+
+/// The bottom of the list: a button that works without JavaScript, and a
+/// sentinel that loads the next batch when it scrolls into view.
+fn more_control(loaded: i64, total: i64) -> String {
+    if loaded >= total {
+        return String::new();
+    }
+    format!(
+        "<div class=\"mt-6 flex flex-col items-center gap-3\" data-news-more data-offset=\"{loaded}\">\
+<button type=\"button\" data-news-load class=\"heading border border-line/70 px-5 py-2.5 text-sm tracking-[0.1em] text-dim transition-colors hover:border-ember/60 hover:text-ink\">Load older entries</button>\
+<span class=\"label text-faint\">Showing {loaded} of {total}</span>\
+</div>"
     )
 }
 
@@ -646,6 +700,9 @@ mod tests {
             mode: "open",
             signed_in: true,
             may_post: true,
+            remaining: Some(5),
+            limit: 5,
+            resets_at: None,
             reason: None,
         }
     }
@@ -658,6 +715,8 @@ mod tests {
             moderator,
             reacted: &reacted,
             hint: hint(),
+            offset: 0,
+            total: 0,
         };
         feed(&data, &Chrome::default(), &styles(), BASE)
     }
@@ -736,6 +795,8 @@ mod tests {
             moderator: false,
             reacted: &reacted,
             hint: hint(),
+            offset: 0,
+            total: 0,
         };
         let page = feed(&data, &Chrome::default(), &styles(), BASE);
 
@@ -832,13 +893,93 @@ mod tests {
         // the submission form — is plain.
         let anchor = page
             .split("<a ")
-            .find(|chunk| chunk.contains("Write a post"))
+            .find(|chunk| chunk.contains("Post news"))
             .and_then(|chunk| chunk.split('>').next())
             .expect("the submission link");
         assert!(
             !anchor.contains("panel-ticks"),
             "a link does not get ticks: {anchor}"
         );
+    }
+
+    #[test]
+    fn the_posting_box_reports_the_allowance_and_hides_the_form_at_zero() {
+        let with_left = |remaining: i64| {
+            let reacted = HashSet::new();
+            let data = FeedData {
+                approved: &[article()],
+                pending: &[],
+                moderator: false,
+                reacted: &reacted,
+                hint: PostingHint {
+                    mode: "open",
+                    signed_in: true,
+                    may_post: true,
+                    remaining: Some(remaining),
+                    limit: 5,
+                    resets_at: Some(1_794_360_000),
+                    reason: None,
+                },
+                offset: 0,
+                total: 1,
+            };
+            feed(&data, &Chrome::default(), &styles(), BASE)
+        };
+
+        let some_left = with_left(3);
+        assert!(some_left.contains("3 of 5 left today"), "{some_left}");
+        assert!(
+            some_left.contains("href=\"/news/submit\""),
+            "the form is offered while there is allowance"
+        );
+
+        let none_left = with_left(0);
+        assert!(
+            !none_left.contains("href=\"/news/submit\""),
+            "no form when it cannot be used: {none_left}"
+        );
+        assert!(
+            none_left.contains("used all 5 posts for today"),
+            "{none_left}"
+        );
+        assert!(
+            none_left.contains("post again after"),
+            "and when: {none_left}"
+        );
+    }
+
+    #[test]
+    fn the_feed_offers_older_entries_only_when_there_are_some() {
+        let reacted = HashSet::new();
+        let with_more = FeedData {
+            approved: &[article()],
+            pending: &[],
+            moderator: false,
+            reacted: &reacted,
+            hint: hint(),
+            offset: 10,
+            total: 25,
+        };
+        let page = feed(&with_more, &Chrome::default(), &styles(), BASE);
+        assert!(page.contains("data-news-more"), "{page}");
+        assert!(
+            page.contains("Load older entries"),
+            "a fallback that needs no script"
+        );
+        assert!(page.contains("Showing 11 of 25"));
+
+        // Everything already loaded: no control at all.
+        let all = FeedData {
+            approved: &[article()],
+            pending: &[],
+            moderator: false,
+            reacted: &reacted,
+            hint: hint(),
+            offset: 0,
+            total: 1,
+        };
+        let page = feed(&all, &Chrome::default(), &styles(), BASE);
+        assert!(!page.contains("data-news-more"), "{page}");
     }
 
     #[test]
@@ -918,6 +1059,8 @@ mod tests {
             moderator: false,
             reacted: &reacted,
             hint: hint(),
+            offset: 0,
+            total: 0,
         };
         let page = feed(&data, &signed_in, &styles(), BASE);
 
@@ -951,6 +1094,8 @@ mod tests {
             moderator: false,
             reacted: &reacted,
             hint: hint(),
+            offset: 0,
+            total: 0,
         };
         feed(&data, chrome, &styles(), BASE)
     }

@@ -224,6 +224,8 @@ pub fn app(state: Arc<AppState>) -> Router {
         // Server-rendered pages, so a post written this morning is crawlable
         // this morning (the SvelteKit build is static).
         .route("/news", axum::routing::get(routes::pages::feed))
+        // The next batch of entries, as HTML: the feed's endless scroll.
+        .route("/news/cards", axum::routing::get(routes::pages::cards))
         .route("/news/{*rest}", axum::routing::get(routes::pages::post))
         .route(
             "/sitemap.xml",

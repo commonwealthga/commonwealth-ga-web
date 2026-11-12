@@ -19,12 +19,21 @@
 		has_editor: boolean;
 	}
 
+	interface Allowance {
+		limit: number;
+		used: number;
+		remaining: number;
+		resets_at: number | null;
+		resets_at_clock: string | null;
+	}
+
 	interface Rules {
 		mode: string;
 		signed_in: boolean;
 		moderator: boolean;
 		may_post: boolean;
 		reason: string | null;
+		allowance: Allowance | null;
 		kinds: KindOption[];
 		limits: {
 			title_max: number;
@@ -232,6 +241,18 @@
 				>
 			{/if}
 		</Panel>
+	{:else if rules && rules.may_post && rules.allowance && rules.allowance.remaining === 0}
+		<Panel label="No posts left today">
+			<p class="text-sm leading-relaxed text-dim">
+				You have used all {rules.allowance.limit} of today's posts.
+				{#if rules.allowance.resets_at_clock}
+					You can post again after {rules.allowance.resets_at_clock}.
+				{:else}
+					Come back tomorrow.
+				{/if}
+			</p>
+			<a class="label mt-4 inline-block text-ember hover:text-amber" href="/news">Back to the feed</a>
+		</Panel>
 	{:else if rules}
 		{#if phase === 'sent'}
 			<Panel label="In the queue">
@@ -395,7 +416,11 @@
 					>
 						{phase === 'sending' ? 'Sending…' : 'Submit for review'}
 					</button>
-					<span class="label text-faint">Up to {rules.limits.per_day} posts a day</span>
+					{#if rules.allowance}
+						<span class="label text-faint">
+							{rules.allowance.remaining} of {rules.allowance.limit} left today
+						</span>
+					{/if}
 				</div>
 			</form>
 		{/if}

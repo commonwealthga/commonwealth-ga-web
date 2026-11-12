@@ -434,7 +434,77 @@ async fn submissions_are_rate_limited_per_account() {
     payload["title"] = serde_json::json!("One too many");
     let (status, body) = send(&app, submit_request(Some(&author), payload)).await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
-    assert!(body.contains("a day"), "{body}");
+    assert!(body.contains("used today's 5 posts"), "{body}");
+    // No "ask a moderator": moderators cannot change an allowance.
+    assert!(!body.contains("moderator"), "{body}");
+    assert!(body.contains("post again after"), "says when: {body}");
+}
+
+#[tokio::test]
+async fn the_form_is_told_what_is_left_before_anything_is_written() {
+    let harness = Harness::new().await;
+    let app = harness.router(None, PostingMode::Open);
+    let author = harness.session(7, "Agent07").await;
+
+    let (status, body) = send(&app, get(Some(&author), "/api/news/posting-rules")).await;
+    assert_eq!(status, StatusCode::OK);
+    let rules = json(&body);
+    assert_eq!(rules["allowance"]["limit"], webapi::news::RATE_LIMIT);
+    assert_eq!(rules["allowance"]["remaining"], webapi::news::RATE_LIMIT);
+    assert_eq!(rules["allowance"]["used"], 0);
+    assert!(
+        rules["allowance"]["resets_at"].is_null(),
+        "a full allowance does not expire"
+    );
+
+    // Two submissions later, the form knows there are three left.
+    for i in 0..2 {
+        let mut payload = post_payload();
+        payload["title"] = serde_json::json!(format!("Post {i}"));
+        send(&app, submit_request(Some(&author), payload)).await;
+    }
+    let (_, body) = send(&app, get(Some(&author), "/api/news/posting-rules")).await;
+    let rules = json(&body);
+    assert_eq!(rules["allowance"]["used"], 2);
+    assert_eq!(
+        rules["allowance"]["remaining"],
+        webapi::news::RATE_LIMIT - 2
+    );
+    assert!(
+        rules["allowance"]["resets_at"].as_i64().is_some(),
+        "and when the first one expires: {rules}"
+    );
+}
+
+#[tokio::test]
+async fn a_rejected_post_does_not_cost_allowance() {
+    let harness = Harness::new().await;
+    let live = harness
+        .live_with_roles(&[(1, access::ROLE_MODERATOR)])
+        .await;
+    let app = harness.router(Some(live), PostingMode::Open);
+    let author = harness.session(7, "Agent07").await;
+    let moderator = harness.session(1, "ModOne").await;
+
+    let (_, body) = send(&app, submit_request(Some(&author), post_payload())).await;
+    let id = json(&body)["id"].as_i64().expect("id");
+    send(
+        &app,
+        action_request(
+            &moderator,
+            &format!("/api/news/{id}/reject"),
+            serde_json::json!({ "note": "no" }),
+        ),
+    )
+    .await;
+
+    let (_, body) = send(&app, get(Some(&author), "/api/news/posting-rules")).await;
+    let rules = json(&body);
+    assert_eq!(
+        rules["allowance"]["remaining"],
+        webapi::news::RATE_LIMIT,
+        "a moderation decision is not the author's fault: {rules}"
+    );
 }
 
 #[tokio::test]

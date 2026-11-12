@@ -397,6 +397,12 @@ pub fn youtube_id(url: &str) -> Option<String> {
     valid.then_some(candidate)
 }
 
+/// `HH:MM UTC` — for a sentence about when something becomes possible again.
+pub fn clock_utc(ts: i64) -> String {
+    let seconds = ts.rem_euclid(86_400);
+    format!("{:02}:{:02} UTC", seconds / 3600, (seconds % 3600) / 60)
+}
+
 /// A URL-safe fragment of the title. Unused by any page now that the feed shows
 /// entries in full, but stored with each post so a future detail view has one.
 pub fn slugify(title: &str) -> String {

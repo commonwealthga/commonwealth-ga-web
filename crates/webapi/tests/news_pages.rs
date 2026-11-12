@@ -449,6 +449,113 @@ async fn a_rejected_post_is_on_nobody_s_feed() {
 }
 
 #[tokio::test]
+async fn the_feed_arrives_a_page_at_a_time() {
+    let harness = Harness::new().await;
+    // 12 entries: more than one page, with a partial last page.
+    for i in 0..12 {
+        harness
+            .published(&format!("Entry number {i}"), 1_764_000_000 + i * 60)
+            .await;
+    }
+    let app = harness.router();
+
+    let (status, _, html) = get(&app, "/news", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        html.matches("<li id=\"post-").count(),
+        10,
+        "the first page holds ten entries"
+    );
+    assert!(
+        html.contains("data-news-more"),
+        "and offers the rest: {html}"
+    );
+    assert!(html.contains("Showing 10 of 12"));
+    assert!(
+        html.contains("Entry number 11"),
+        "the newest entry comes first: {html}"
+    );
+    assert!(
+        !html.contains("Entry number 0"),
+        "the oldest is not in the first page: {html}"
+    );
+}
+
+#[tokio::test]
+async fn the_next_batch_is_the_same_markup_and_says_when_it_ends() {
+    let harness = Harness::new().await;
+    for i in 0..12 {
+        harness
+            .published(&format!("Entry number {i}"), 1_764_000_000 + i * 60)
+            .await;
+    }
+    let app = harness.router();
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/news/cards?offset=10")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("x-news-more")
+            .and_then(|value| value.to_str().ok()),
+        Some("false"),
+        "nothing left after this batch"
+    );
+    let body = axum::body::to_bytes(response.into_body(), 256 * 1024)
+        .await
+        .expect("body");
+    let html = String::from_utf8_lossy(&body);
+
+    assert_eq!(html.matches("<li id=\"post-").count(), 2);
+    assert!(
+        html.contains("data-thumb-post"),
+        "the batch carries its thumbs-up buttons: {html}"
+    );
+    assert!(
+        !html.contains("<!doctype html>"),
+        "a fragment, not a page: {html}"
+    );
+
+    // The first batch reports that there is more.
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/news/cards?offset=0")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(
+        response
+            .headers()
+            .get("x-news-more")
+            .and_then(|value| value.to_str().ok()),
+        Some("true")
+    );
+}
+
+#[tokio::test]
+async fn a_short_feed_has_no_load_more_control() {
+    let harness = Harness::new().await;
+    harness.published("Only entry", 1_764_000_000).await;
+    let app = harness.router();
+
+    let (_, _, html) = get(&app, "/news", None).await;
+    assert!(!html.contains("data-news-more"), "{html}");
+    assert!(!html.contains("Load older entries"));
+}
+
+#[tokio::test]
 async fn the_queue_page_is_moderator_only() {
     let harness = Harness::new().await;
     let entry = webapi::news::validate("news", "In review", "", "Body", &[]).expect("valid");

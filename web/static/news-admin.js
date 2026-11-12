@@ -55,6 +55,71 @@
 		});
 	});
 
+	// ---- endless scroll ----------------------------------------------------
+	// The first batch is server-rendered; older entries arrive as the same markup
+	// from /news/cards, so there is nothing to keep in step. The button underneath
+	// does the same thing, and works without this script.
+	var more = document.querySelector('[data-news-more]');
+	if (more) {
+		var list = document.querySelector('main ul');
+		var button = more.querySelector('[data-news-load]');
+		var loading = false;
+
+		var loadOlder = function () {
+			if (loading || !more) return;
+			loading = true;
+			if (button) button.disabled = true;
+			var offset = Number(more.dataset.offset || '0');
+
+			fetch('/news/cards?offset=' + offset, { credentials: 'same-origin' })
+				.then(function (response) {
+					if (!response.ok) throw new Error('could not load more (' + response.status + ')');
+					var more_ = response.headers.get('X-News-More') === 'true';
+					return response.text().then(function (html) { return { html: html, more: more_ }; });
+				})
+				.then(function (result) {
+					var holder = document.createElement('div');
+					holder.innerHTML = result.html;
+					var added = holder.children.length;
+					if (list) {
+						while (holder.firstElementChild) list.appendChild(holder.firstElementChild);
+					}
+					offset += added;
+					more.dataset.offset = String(offset);
+					var count = more.querySelector('.label');
+					if (count && added) {
+						// "Showing N of M" — M stays as the server said.
+						var match = /of (\d+)/.exec(count.textContent || '');
+						if (match) count.textContent = 'Showing ' + offset + ' of ' + match[1];
+					}
+					if (!result.more || added === 0) {
+						more.remove();
+						more = null;
+					}
+				})
+				.catch(function (error) {
+					var count = more && more.querySelector('.label');
+					if (count) count.textContent = error.message;
+				})
+				.then(function () {
+					loading = false;
+					if (button) button.disabled = false;
+				});
+		};
+
+		if (button) button.addEventListener('click', loadOlder);
+
+		// Scroll to the bottom and the next batch starts loading; the button stays
+		// as the fallback for a slow connection or a keyboard.
+		if ('IntersectionObserver' in window) {
+			new IntersectionObserver(function (entries) {
+				entries.forEach(function (entry) {
+					if (entry.isIntersecting) loadOlder();
+				});
+			}, { rootMargin: '400px' }).observe(more);
+		}
+	}
+
 	// ---- moderation queue --------------------------------------------------
 	document.querySelectorAll('[data-pending]').forEach(function (card) {
 		var note = card.querySelector('[data-note]');

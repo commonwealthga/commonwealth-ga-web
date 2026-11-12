@@ -23,6 +23,32 @@ use crate::routes::auth::current_session;
 const FEED_DEFAULT: i64 = 20;
 const FEED_MAX: i64 = 50;
 
+/// How many submissions an account may still make today, and when the oldest
+/// one in the window expires. Computed in one place so the form, the feed and
+/// the refusal all say the same thing.
+#[derive(Debug, Clone, Copy)]
+pub struct Allowance {
+    pub limit: i64,
+    pub used: i64,
+    pub remaining: i64,
+    /// When the oldest submission in the window drops out. `None` when the
+    /// allowance is untouched.
+    pub resets_at: Option<i64>,
+}
+
+pub async fn allowance(site: &sqlx::SqlitePool, user_id: i64, now: i64) -> ApiResult<Allowance> {
+    let since = now - news::RATE_WINDOW_SECS;
+    let (used, oldest) = store::allowance_used(site, user_id, since)
+        .await
+        .map_err(internal)?;
+    Ok(Allowance {
+        limit: news::RATE_LIMIT,
+        used,
+        remaining: (news::RATE_LIMIT - used).max(0),
+        resets_at: oldest.map(|at| at + news::RATE_WINDOW_SECS),
+    })
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Page {
     limit: Option<i64>,
@@ -293,13 +319,17 @@ pub async fn submit(
         .map_err(|denial| AppError::Forbidden(denial.message().to_string()))?;
 
     let now = now_unix();
-    let recent = store::submissions_since(site, session.user_id, now - news::RATE_WINDOW_SECS)
-        .await
-        .map_err(internal)?;
-    if recent >= news::RATE_LIMIT {
+    let left = allowance(site, session.user_id, now).await?;
+    if left.remaining == 0 {
+        // No "ask a moderator": moderators cannot change an allowance, so
+        // suggesting it only sends the reader somewhere useless.
+        let when = match left.resets_at {
+            Some(at) => format!(" You can post again after {}.", news::clock_utc(at)),
+            None => String::new(),
+        };
         return Err(AppError::RateLimited(format!(
-            "You can submit {} posts a day. Try again tomorrow, or ask a moderator.",
-            news::RATE_LIMIT
+            "You have used today's {} posts.{when}",
+            left.limit
         )));
     }
 

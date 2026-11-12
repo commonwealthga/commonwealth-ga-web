@@ -160,8 +160,10 @@ read-only, hence the writable default.
 | `/db-export/<token>` | Redacted database download for third parties (the cards registry). Disabled unless `WEB_DB_EXPORT_TOKEN` is set |
 | `/news` | **Server-rendered HTML**, not JSON: the whole feed, every entry in full, with canonical link and Open Graph tags. Crawlable because it cannot be prerendered |
 | `/news/{id}-{slug}` | `301` to `/news#post-{id}`. Kept so an existing link keeps working; there is no per-post page |
+| `/news/cards?offset=&limit=` | The next batch of entries as an HTML fragment, with `X-News-More: true\|false` |
 | `/sitemap.xml` | Generated: the static pages plus every published post. Served as `application/xml` |
 | `/api/news?limit=&offset=` | Published posts, plus whether *you* may submit |
+| `/api/news/posting-rules` | Per-kind form hints, limits, and *your* remaining allowance |
 | `/api/news/mine` | Your own submissions and their moderation state |
 | `/api/news/queue` | Pending submissions — `news_moderator` only |
 | `/api/news` (`POST`) | Submit a post. Always lands pending; rate limited per account |
@@ -227,6 +229,20 @@ its thumbs-up button. There is no detail page: a post URL (`/news/12-slug`)
 redirects to the entry's anchor (`/news#post-12`), so old links still land
 somewhere sensible, and the sitemap lists `/news` rather than hundreds of
 URLs that only redirect.
+
+**The feed arrives a page at a time.** The first ten entries are server-rendered;
+scrolling to the bottom fetches the next ten from `/news/cards` — the same `<li>`
+markup, so there is one renderer — and appends them. A `Load older entries`
+button below the list does the same job with no JavaScript at all, and stays as
+the fallback when the fetch is slow. `X-News-More` says whether to ask again.
+
+**The allowance is visible before it is spent.** Every account may submit five
+entries a day (rejected ones do not count). `/api/news/posting-rules` reports
+`remaining`, `used`, `reset_at` and the clock time it lifts, and both the feed
+and the submission form use it: the feed shows "3 of 5 left today", and at zero
+it replaces the form link with when posting resumes rather than offering a form
+that will be refused. The refusal message names the limit and the time, and does
+not suggest asking a moderator — they cannot change it.
 
 **Each kind asks for only what it needs.** `news`, `update` and `article` take a
 title, a summary and a Markdown body. `video` takes YouTube links and nothing

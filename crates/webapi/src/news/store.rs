@@ -260,6 +260,34 @@ pub async fn submissions_since(pool: &SqlitePool, author_id: i64, since: i64) ->
     .await
 }
 
+/// How many submissions this account has used up, and when the oldest one in the
+/// window drops out. `None` when nothing is pending or published in the window:
+/// the allowance is full and does not reset on any particular clock.
+pub async fn allowance_used(
+    pool: &SqlitePool,
+    author_id: i64,
+    since: i64,
+) -> sqlx::Result<(i64, Option<i64>)> {
+    let row: (i64, Option<i64>) = sqlx::query_as(
+        "SELECT COUNT(*), MIN(created_at) FROM news_posts
+         WHERE author_id = ? AND created_at >= ? AND status != ?",
+    )
+    .bind(author_id)
+    .bind(since)
+    .bind(Status::Rejected.as_str())
+    .fetch_one(pool)
+    .await?;
+    Ok(row)
+}
+
+/// Total published posts, for "is there another page".
+pub async fn count_approved(pool: &SqlitePool) -> sqlx::Result<i64> {
+    sqlx::query_scalar("SELECT COUNT(*) FROM news_posts WHERE status = ?")
+        .bind(Status::Approved.as_str())
+        .fetch_one(pool)
+        .await
+}
+
 /// Approved posts, newest first — the public feed.
 pub async fn feed(pool: &SqlitePool, limit: i64, offset: i64) -> sqlx::Result<Vec<Post>> {
     let rows = sqlx::query(&format!(
