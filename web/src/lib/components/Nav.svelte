@@ -13,12 +13,8 @@
 		{ href: '/community', label: 'Community' },
 		{ href: '/events', label: 'Events' },
 		{ href: '/agents', label: 'Agents' },
-		{ href: '/missions', label: 'Missions' }
-		// The News entry lands here at release. The section is being tested, and
-		// an unfinished page should not be in the menu; its routes are live, only
-		// the link is withheld. (Kept prose-only: the Rust header test parses
-		// `href:` literals out of this file, so a commented-out entry would read
-		// as a real one.)
+		{ href: '/missions', label: 'Missions' },
+		{ href: '/news', label: 'News' }
 	];
 
 	const active = (href: string) => page.url.pathname.startsWith(href);
