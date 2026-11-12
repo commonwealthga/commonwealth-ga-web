@@ -32,25 +32,28 @@
 	}
 
 	// ---- thumbs up ---------------------------------------------------------
-	var thumb = document.getElementById('thumb');
-	if (thumb) {
-		var thumbCount = document.getElementById('thumb-count');
-		thumb.addEventListener('click', function () {
-			var wanted = thumb.dataset.active !== 'true';
-			post('/api/news/' + thumb.dataset.post + '/thumb', { active: wanted })
+	// One per entry: the feed shows every post in full, each with its own button.
+	document.querySelectorAll('[data-thumb-post]').forEach(function (button) {
+		var id = button.dataset.thumbPost;
+		var count = document.querySelector('[data-thumb-count="' + id + '"]');
+		var note = document.querySelector('[data-thumb-note="' + id + '"]');
+
+		button.addEventListener('click', function () {
+			var wanted = button.dataset.thumbActive !== 'true';
+			post('/api/news/' + id + '/thumb', { active: wanted })
 				.then(function (data) {
-					thumbCount.textContent = String(data.thumbs_up);
-					thumb.dataset.active = String(data.reacted);
-					thumb.setAttribute('aria-pressed', String(data.reacted));
+					if (count) count.textContent = String(data.thumbs_up);
+					button.dataset.thumbActive = String(data.reacted);
+					button.setAttribute('aria-pressed', String(data.reacted));
+					if (note) note.textContent = '';
 				})
 				.catch(function (error) {
 					// Most often "not signed in", which is worth saying rather than
 					// leaving a button that appears broken.
-					var note = document.getElementById('thumb-note');
 					if (note) note.textContent = error.message;
 				});
 		});
-	}
+	});
 
 	// ---- moderation queue --------------------------------------------------
 	document.querySelectorAll('[data-pending]').forEach(function (card) {

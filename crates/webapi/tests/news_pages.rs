@@ -62,11 +62,11 @@ impl Harness {
     /// A published post, written straight to the site database.
     async fn published(&self, title: &str, now: i64) -> i64 {
         let entry = webapi::news::validate(
-            "guide",
+            "article",
             title,
             "A summary for the snippet.",
             "## Body",
-            None,
+            &[],
         )
         .expect("valid");
         let id = store::create(&self.site, 7, "Agent07", &entry, now)
@@ -125,13 +125,13 @@ async fn the_feed_is_a_complete_page_a_crawler_can_read() {
         html.contains("<title>News · The Commonwealth</title>"),
         "{html}"
     );
+    // The entry is the page: no teaser, no link to a detail view.
+    assert!(html.contains(&format!("id=\"post-{id}\"")), "{html}");
+    assert!(html.contains("Surfside Atoll is live"), "{html}");
+    assert!(html.contains("posted an article"), "{html}");
     assert!(
-        html.contains(&format!("href=\"/news/{id}-surfside-atoll-is-live\"")),
-        "{html}"
-    );
-    assert!(
-        html.contains("A summary for the snippet."),
-        "the summary is shown"
+        !html.contains(&format!("href=\"/news/{id}")),
+        "no detail-page link: {html}"
     );
     assert!(
         html.contains("<link rel=\"canonical\" href=\"https://example.test/news\">"),
@@ -142,58 +142,57 @@ async fn the_feed_is_a_complete_page_a_crawler_can_read() {
 }
 
 #[tokio::test]
-async fn a_post_page_carries_metadata_structured_data_and_the_rendered_body() {
+async fn a_post_url_lands_on_the_entry_in_the_feed() {
     let harness = Harness::new().await;
     let id = harness
         .published("Surfside Atoll is live", 1_764_000_000)
         .await;
     let app = harness.router();
 
-    let uri = format!("/news/{id}-surfside-atoll-is-live");
-    let (status, content_type, html) = get(&app, &uri, None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(content_type.as_deref(), Some("text/html; charset=utf-8"),);
-
-    assert!(html.contains(&format!(
-        "<link rel=\"canonical\" href=\"https://example.test{uri}\">"
-    )));
-    assert!(
-        html.contains("\"@type\":\"Article\""),
-        "structured data: {html}"
-    );
-    assert!(html.contains("\"headline\":\"Surfside Atoll is live\""));
-    assert!(html.contains("<h1 class=\"heading"), "the page has its h1");
-    assert_eq!(html.matches("<h1").count(), 1, "exactly one h1");
-    assert!(
-        html.contains("<h2>Body</h2>"),
-        "the body is rendered, not escaped"
-    );
-    assert!(html.contains("<meta name=\"description\""));
+    for uri in [
+        format!("/news/{id}-surfside-atoll-is-live"),
+        // An address from before a title edit still leads somewhere sensible.
+        format!("/news/{id}-a-title-from-before-an-edit"),
+    ] {
+        let (status, _, _) = get(&app, &uri, None).await;
+        assert_eq!(status, StatusCode::MOVED_PERMANENTLY, "{uri}");
+    }
 }
 
 #[tokio::test]
-async fn a_stale_slug_redirects_instead_of_404ing() {
+async fn the_entry_itself_is_rendered_in_full_on_the_feed() {
     let harness = Harness::new().await;
-    let id = harness.published("Original title", 1_764_000_000).await;
+    let id = harness
+        .published("Surfside Atoll is live", 1_764_000_000)
+        .await;
     let app = harness.router();
 
-    let (status, _, _) = get(
-        &app,
-        &format!("/news/{id}-a-title-from-before-an-edit"),
-        None,
-    )
-    .await;
-    assert_eq!(
-        status,
-        StatusCode::MOVED_PERMANENTLY,
-        "a shared link keeps working after a title edit"
+    let (status, _, html) = get(&app, "/news", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        html.contains(&format!("id=\"post-{id}\"")),
+        "the anchor: {html}"
+    );
+    assert!(
+        html.contains("posted an article"),
+        "the header line: {html}"
+    );
+    assert!(html.contains("Agent07"), "who posted it");
+    assert!(html.contains("<h2>Body</h2>"), "the body in full: {html}");
+    assert!(
+        html.contains("data-thumb-post"),
+        "a thumbs-up per entry: {html}"
+    );
+    assert!(
+        !html.contains(&format!("href=\"/news/{id}")),
+        "and no link to a detail page: {html}"
     );
 }
 
 #[tokio::test]
-async fn pending_and_rejected_posts_have_no_public_page() {
+async fn pending_posts_are_still_not_public_but_redirect_their_author() {
     let harness = Harness::new().await;
-    let entry = webapi::news::validate("news", "Still in review", "", "Body", None).expect("valid");
+    let entry = webapi::news::validate("news", "Still in review", "", "Body", &[]).expect("valid");
     let pending = store::create(&harness.site, 7, "Agent07", &entry, 1_764_000_000)
         .await
         .expect("create");
@@ -202,20 +201,21 @@ async fn pending_and_rejected_posts_have_no_public_page() {
     let (status, _, _) = get(&app, &format!("/news/{pending}-still-in-review"), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
-    // The author sees their own pending page, with a note saying so.
     let author = auth::create_session(&harness.site, 7, "Agent07")
         .await
         .expect("session");
-    let (status, _, html) = get(
+    let (status, _, _) = get(
         &app,
         &format!("/news/{pending}-still-in-review"),
         Some(&author),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(html.contains("waiting for a moderator"), "{html}");
+    assert_eq!(
+        status,
+        StatusCode::MOVED_PERMANENTLY,
+        "their own entry is in their feed"
+    );
 
-    // Rejected: gone even for the author.
     store::reject(&harness.site, pending, 1, "ModOne", "spam", 1_764_000_100)
         .await
         .expect("reject");
@@ -225,7 +225,11 @@ async fn pending_and_rejected_posts_have_no_public_page() {
         Some(&author),
     )
     .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "a rejected post is addressable by nobody"
+    );
 }
 
 #[tokio::test]
@@ -255,17 +259,9 @@ async fn unknown_news_paths_fall_through_to_the_frontend_or_404() {
 }
 
 #[tokio::test]
-async fn the_sitemap_lists_static_pages_and_published_posts_only() {
+async fn the_sitemap_lists_pages_not_posts() {
     let harness = Harness::new().await;
     let published = harness.published("A published post", 1_764_000_000).await;
-    let rejected_entry =
-        webapi::news::validate("news", "A rejected post", "", "Body", None).expect("valid");
-    let rejected = store::create(&harness.site, 8, "Agent08", &rejected_entry, 1_764_000_000)
-        .await
-        .expect("create");
-    store::reject(&harness.site, rejected, 1, "ModOne", "no", 1_764_000_100)
-        .await
-        .expect("reject");
     let app = harness.router();
 
     let (status, content_type, xml) = get(&app, "/sitemap.xml", None).await;
@@ -275,21 +271,14 @@ async fn the_sitemap_lists_static_pages_and_published_posts_only() {
         Some("application/xml; charset=utf-8"),
         "a sitemap must be served as XML, not text/html"
     );
-    assert!(xml.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
+    assert!(xml.contains("<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">"));
     assert!(
-        xml.contains("<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">"),
-        "the plural sitemaps.org namespace: {xml}"
-    );
-    assert!(xml.contains("<loc>https://example.test/</loc>"));
-    assert!(
-        xml.contains(&format!(
-            "<loc>https://example.test/news/{published}-a-published-post</loc>"
-        )),
+        xml.contains("<loc>https://example.test/news</loc>"),
         "{xml}"
     );
     assert!(
-        !xml.contains("a-rejected-post"),
-        "a rejected post must not be advertised to crawlers"
+        !xml.contains(&format!("/news/{published}")),
+        "a post URL redirects, so listing it would waste crawl budget: {xml}"
     );
 }
 
@@ -326,7 +315,7 @@ async fn the_sitemap_survives_without_a_site_database() {
 #[tokio::test]
 async fn a_moderator_moderates_on_the_feed_itself() {
     let harness = Harness::new().await;
-    let entry = webapi::news::validate("news", "Waiting here", "", "Body", None).expect("valid");
+    let entry = webapi::news::validate("news", "Waiting here", "", "Body", &[]).expect("valid");
     let pending = store::create(&harness.site, 7, "Agent07", &entry, 1_764_000_000)
         .await
         .expect("create");
@@ -408,7 +397,7 @@ async fn a_moderator_moderates_on_the_feed_itself() {
 async fn an_author_sees_their_own_pending_post_on_the_feed() {
     let harness = Harness::new().await;
     let entry =
-        webapi::news::validate("guide", "My draft", "A summary", "Body", None).expect("valid");
+        webapi::news::validate("news", "My draft", "A summary", "Body", &[]).expect("valid");
     store::create(&harness.site, 7, "Agent07", &entry, 1_764_000_000)
         .await
         .expect("create");
@@ -437,7 +426,7 @@ async fn an_author_sees_their_own_pending_post_on_the_feed() {
 #[tokio::test]
 async fn a_rejected_post_is_on_nobody_s_feed() {
     let harness = Harness::new().await;
-    let entry = webapi::news::validate("news", "Removed post", "", "Body", None).expect("valid");
+    let entry = webapi::news::validate("news", "Removed post", "", "Body", &[]).expect("valid");
     let id = store::create(&harness.site, 7, "Agent07", &entry, 1_764_000_000)
         .await
         .expect("create");
@@ -462,7 +451,7 @@ async fn a_rejected_post_is_on_nobody_s_feed() {
 #[tokio::test]
 async fn the_queue_page_is_moderator_only() {
     let harness = Harness::new().await;
-    let entry = webapi::news::validate("news", "In review", "", "Body", None).expect("valid");
+    let entry = webapi::news::validate("news", "In review", "", "Body", &[]).expect("valid");
     store::create(&harness.site, 7, "Agent07", &entry, 1_764_000_000)
         .await
         .expect("create");
@@ -480,7 +469,7 @@ async fn the_queue_page_is_moderator_only() {
 #[tokio::test]
 async fn pending_posts_keep_their_status_visible_to_their_author() {
     let harness = Harness::new().await;
-    let entry = webapi::news::validate("news", "Mine", "", "Body", None).expect("valid");
+    let entry = webapi::news::validate("news", "Mine", "", "Body", &[]).expect("valid");
     store::create(&harness.site, 7, "Agent07", &entry, 1_764_000_000)
         .await
         .expect("create");

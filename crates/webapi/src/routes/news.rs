@@ -32,11 +32,17 @@ pub struct Page {
 #[derive(Debug, Deserialize)]
 pub struct SubmitBody {
     kind: String,
+    /// Optional for a video entry, which is links and nothing else.
+    #[serde(default)]
     title: String,
     #[serde(default)]
     summary: String,
     #[serde(default)]
     body: String,
+    /// Video entries send one or more links; everything else sends at most one.
+    /// `link` stays accepted so a single-link client keeps working.
+    #[serde(default)]
+    links: Vec<String>,
     #[serde(default)]
     link: Option<String>,
 }
@@ -68,7 +74,7 @@ pub struct PostView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub body_markdown: Option<String>,
     pub link: Option<String>,
-    pub video_id: Option<String>,
+    pub videos: Vec<String>,
     pub author: String,
     pub created_at: i64,
     pub thumbs_up: i64,
@@ -105,7 +111,7 @@ impl PostView {
             body_html: post.body_html.clone(),
             body_markdown: with_markdown.then(|| post.body_markdown.clone()),
             link: post.link.clone(),
-            video_id: post.video_id.clone(),
+            videos: post.videos.clone(),
             author: post.author_name.clone(),
             created_at: post.created_at,
             thumbs_up: post.thumbs_up,
@@ -297,14 +303,12 @@ pub async fn submit(
         )));
     }
 
-    let entry = news::validate(
-        &body.kind,
-        &body.title,
-        &body.summary,
-        &body.body,
-        body.link.as_deref(),
-    )
-    .map_err(|error| AppError::BadRequest(error.message().to_string()))?;
+    let mut links = body.links;
+    if let Some(single) = body.link {
+        links.push(single);
+    }
+    let entry = news::validate(&body.kind, &body.title, &body.summary, &body.body, &links)
+        .map_err(|error| AppError::BadRequest(error.message().to_string()))?;
 
     let id = store::create(site, session.user_id, &session.username, &entry, now)
         .await

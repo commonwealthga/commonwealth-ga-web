@@ -53,29 +53,45 @@ pub async fn feed(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Api
         signed_in_as: viewer.session.as_ref().map(|s| s.username.as_str()),
         status: chip.as_deref(),
     };
+    // Which entries this reader already thumbed up, in one query rather than
+    // one per card.
+    let mut reacted = std::collections::HashSet::new();
+    if let Some(session) = viewer.session.as_ref() {
+        for post in approved.iter().chain(pending.iter()) {
+            if store::has_reacted(site, post.id, session.user_id)
+                .await
+                .map_err(internal)?
+            {
+                reacted.insert(post.id);
+            }
+        }
+    }
+
     let data = pages::FeedData {
         approved: &approved,
         pending: &pending,
         moderator: viewer.roles.moderator,
+        reacted: &reacted,
         hint,
     };
     let html = pages::feed(&data, &chrome, &state.stylesheets, &state.cfg.site_url);
     Ok(html_response(html))
 }
 
-/// `GET /news/{id}-{slug}` — one post as a page.
+/// `GET /news/{id}-{slug}` — the feed is the page now.
 ///
-/// The id is what identifies the post; a mismatched slug is a redirect to the
-/// canonical path rather than a 404, because a title edit should not break a
-/// link someone shared.
+/// Entries are shown in full on `/news`, so a post has no page of its own. A
+/// link to one (from Discord, or from a crawler that read an older sitemap)
+/// lands on the entry itself rather than a 404: one page per post meant the
+/// content lived in a place nobody was ever sent to.
 pub async fn post(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(rest): Path<String>,
 ) -> ApiResult<Response> {
     let Some(id) = leading_id(&rest) else {
-        // `/news/submit`, `/news/queue` and anything else non-numeric belongs to
-        // the prerendered frontend.
+        // `/news/submit` and anything else non-numeric belongs to the
+        // prerendered frontend.
         return match prerendered(&state, &format!("news/{rest}")).await {
             Some(response) => Ok(response),
             None => Err(AppError::NotFound("page".to_string())),
@@ -85,66 +101,38 @@ pub async fn post(
     let site = site_pool(&state)?;
     let viewer = viewer(&state, &headers).await?;
 
-    let Some(post) = store::by_id(site, id).await.map_err(internal)? else {
-        return Err(AppError::NotFound("post".to_string()));
-    };
-    if post.status == Status::Rejected {
-        return Err(AppError::NotFound("post".to_string()));
-    }
-
+    // A pending or rejected post is not an address anyone else may follow: the
+    // anchor would lead to a feed without it.
+    let post = store::by_id(site, id)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| AppError::NotFound("post".to_string()))?;
     let is_author = viewer
         .session
         .as_ref()
         .is_some_and(|session| session.user_id == post.author_id);
-    let pending = post.status == Status::Pending;
-    if pending && !is_author && !viewer.roles.moderator {
+    let visible = match post.status {
+        Status::Approved => true,
+        Status::Pending => is_author || viewer.roles.moderator,
+        Status::Rejected => false,
+    };
+    if !visible {
         return Err(AppError::NotFound("post".to_string()));
     }
 
-    // Canonical slug, so one post has exactly one address in a search index.
-    if rest != format!("{}-{}", post.id, post.slug) {
-        return Ok((
-            StatusCode::MOVED_PERMANENTLY,
-            [(header::LOCATION, post.path())],
-        )
-            .into_response());
-    }
-
-    let reacted = match viewer.session.as_ref() {
-        Some(session) => store::has_reacted(site, post.id, session.user_id)
-            .await
-            .map_err(internal)?,
-        None => false,
-    };
-
-    let chip = chip_text(&state).await;
-    let chrome = pages::Chrome {
-        signed_in_as: viewer.session.as_ref().map(|s| s.username.as_str()),
-        status: chip.as_deref(),
-    };
-    let html = pages::post_page(
-        &post,
-        reacted,
-        pending,
-        &chrome,
-        &state.stylesheets,
-        &state.cfg.site_url,
-    );
-    Ok(html_response(html))
+    Ok((
+        StatusCode::MOVED_PERMANENTLY,
+        [(header::LOCATION, format!("/news#post-{id}"))],
+    )
+        .into_response())
 }
 
 /// `GET /sitemap.xml` — static pages plus every published post.
 pub async fn sitemap_xml(State(state): State<Arc<AppState>>) -> ApiResult<Response> {
-    // A missing site database should not take the sitemap down entirely: the
-    // static pages are still worth crawling.
-    let posts = match site_pool(&state) {
-        Ok(site) => store::all_approved(site).await.unwrap_or_else(|error| {
-            tracing::warn!(%error, "sitemap: could not read posts");
-            Vec::new()
-        }),
-        Err(_) => Vec::new(),
-    };
-    let xml = sitemap::render(&state.cfg.site_url, &posts);
+    // Pages only: every post is on /news, and a post URL redirects there, so
+    // listing them would spend crawl budget on redirects. This also means the
+    // sitemap cannot be broken by the news database.
+    let xml = sitemap::render(&state.cfg.site_url);
     Ok((
         [
             (header::CONTENT_TYPE, "application/xml; charset=utf-8"),
@@ -246,8 +234,10 @@ pub async fn posting_rules(
             .map(|kind| json!({
                 "value": kind.as_str(),
                 "label": kind.label(),
+                "phrase": kind.phrase(),
                 "requires_link": kind.requires_link(),
                 "requires_body": kind.requires_body(),
+                "has_editor": kind.has_editor(),
             }))
             .collect::<Vec<_>>(),
         "limits": {
@@ -255,6 +245,7 @@ pub async fn posting_rules(
             "summary_max": crate::news::SUMMARY_MAX,
             "body_max": crate::news::BODY_MAX,
             "per_day": crate::news::RATE_LIMIT,
+            "max_videos": crate::news::MAX_VIDEOS,
         },
         "formatting_help": access::FORMATTING_HELP,
     }))

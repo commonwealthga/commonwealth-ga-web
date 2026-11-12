@@ -148,7 +148,7 @@ fn json(body: &str) -> serde_json::Value {
 
 fn post_payload() -> serde_json::Value {
     serde_json::json!({
-        "kind": "guide",
+        "kind": "article",
         "title": "How to solo the Surfside bunker",
         "summary": "A route that works with a starter suit.",
         "body": "## Prep\n\nBring **two** medkits and _do not_ rush the lift.",
@@ -221,7 +221,7 @@ async fn a_submission_is_invisible_until_a_moderator_publishes_it() {
     let posts = feed["posts"].as_array().expect("posts");
     assert_eq!(posts.len(), 1);
     assert_eq!(posts[0]["title"], "How to solo the Surfside bunker");
-    assert_eq!(posts[0]["kind_label"], "Guide");
+    assert_eq!(posts[0]["kind_label"], "Article");
     assert_eq!(posts[0]["status"], "approved");
     assert!(
         posts[0]["body_markdown"].is_null(),
@@ -481,26 +481,62 @@ async fn a_body_never_arrives_as_the_markup_it_contains() {
 }
 
 #[tokio::test]
-async fn a_video_entry_needs_a_youtube_link() {
+async fn a_video_entry_is_links_and_nothing_else() {
     let harness = Harness::new().await;
     let app = harness.router(None, PostingMode::Open);
     let author = harness.session(7, "Agent07").await;
 
-    let mut payload = post_payload();
-    payload["kind"] = serde_json::json!("video");
-    payload["body"] = serde_json::json!("");
-
-    let (status, body) = send(&app, submit_request(Some(&author), payload.clone())).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-
-    payload["link"] = serde_json::json!("https://example.org/not-youtube");
-    let (status, body) = send(&app, submit_request(Some(&author), payload.clone())).await;
+    // No title, no body: the form does not ask for them.
+    let empty = serde_json::json!({ "kind": "video" });
+    let (status, body) = send(&app, submit_request(Some(&author), empty)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert!(body.contains("YouTube"), "{body}");
 
-    payload["link"] = serde_json::json!("https://youtu.be/dQw4w9WgXcQ");
-    let (status, body) = send(&app, submit_request(Some(&author), payload)).await;
+    let wrong_site = serde_json::json!({
+        "kind": "video",
+        "links": ["https://example.org/not-youtube"]
+    });
+    let (status, body) = send(&app, submit_request(Some(&author), wrong_site)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+    let links = serde_json::json!({
+        "kind": "video",
+        "title": "ignored",
+        "body": "ignored",
+        "links": [
+            "https://youtu.be/dQw4w9WgXcQ",
+            "https://www.youtube.com/watch?v=aaaaaaaaaaa"
+        ]
+    });
+    let (status, body) = send(&app, submit_request(Some(&author), links)).await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
+    let id = json(&body)["id"].as_i64().expect("id");
+
+    // Stored as two embeds, with no invented title.
+    let post = store::by_id(&harness.site, id)
+        .await
+        .expect("lookup")
+        .expect("present");
+    assert_eq!(
+        post.videos,
+        vec!["dQw4w9WgXcQ".to_string(), "aaaaaaaaaaa".to_string()]
+    );
+    assert!(post.title.is_empty(), "a title is never invented");
+    assert!(post.body_html.is_empty());
+}
+
+#[tokio::test]
+async fn too_many_videos_is_refused() {
+    let harness = Harness::new().await;
+    let app = harness.router(None, PostingMode::Open);
+    let author = harness.session(7, "Agent07").await;
+
+    let links: Vec<String> = (0..=webapi::news::MAX_VIDEOS)
+        .map(|i| format!("https://youtu.be/video{i:04}"))
+        .collect();
+    let payload = serde_json::json!({ "kind": "video", "links": links });
+    let (status, body) = send(&app, submit_request(Some(&author), payload)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 }
 
 #[tokio::test]

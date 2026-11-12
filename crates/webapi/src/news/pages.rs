@@ -294,6 +294,8 @@ pub struct FeedData<'a> {
     pub approved: &'a [Post],
     pub pending: &'a [Post],
     pub moderator: bool,
+    /// Posts this reader has already thumbed up.
+    pub reacted: &'a std::collections::HashSet<i64>,
     pub hint: PostingHint,
 }
 
@@ -302,12 +304,12 @@ pub fn feed(data: &FeedData, chrome: &Chrome, stylesheets: &[String], base: &str
     let hint = &data.hint;
     let canonical = format!("{base}/news");
     let description =
-        "News, guides, server updates and videos from the Commonwealth Global Agenda community.";
+        "News, articles, server updates and videos posted by the Commonwealth Global Agenda community.";
 
     let mut body = String::from(
         "<div class=\"flex flex-col gap-2\">\
 <h1 class=\"heading text-4xl text-ink sm:text-5xl\">News</h1>\
-<p class=\"max-w-2xl text-sm leading-relaxed text-dim\">Guides, server updates and articles written by the people who play here. Every post is reviewed by a moderator before it appears.</p>\
+<p class=\"max-w-2xl text-sm leading-relaxed text-dim\">News, articles, server updates and videos posted by the people who play here. Every entry is reviewed by a moderator before it appears.</p>\
 </div>",
     );
 
@@ -336,10 +338,10 @@ pub fn feed(data: &FeedData, chrome: &Chrome, stylesheets: &[String], base: &str
     } else {
         body.push_str("<ul class=\"mt-10 flex flex-col gap-3\">");
         for post in own_pending {
-            body.push_str(&awaiting_card(post));
+            body.push_str(&card(post, false, true));
         }
         for post in posts {
-            body.push_str(&card(post));
+            body.push_str(&card(post, data.reacted.contains(&post.id), false));
         }
         body.push_str("</ul>");
     }
@@ -386,17 +388,13 @@ fn posting_box(hint: &PostingHint) -> String {
 fn review_queue(pending: &[Post]) -> String {
     let mut items = String::new();
     for post in pending {
-        let path = escape(&post.path());
         items.push_str(&format!(
             "<li data-pending=\"{id}\" class=\"border border-amber/40 bg-carbon/40\">\
 <div class=\"flex flex-col gap-3 p-5\">\
-<div class=\"flex flex-wrap items-center gap-3\">\
-<span class=\"label border border-amber/50 px-1.5 py-0.5 text-amber\">{kind}</span>\
-<span class=\"label text-faint\">{date}</span>\
-<span class=\"label text-faint\">{author}</span>\
-</div>\
-<h2 class=\"heading text-xl text-ink\"><a class=\"hover:text-amber\" href=\"{path}\" target=\"_blank\" rel=\"noopener\">{title}</a></h2>\
+<p class=\"label text-faint\"><span class=\"text-amber\">{author}</span> posted {phrase} · {date}</p>\
+{title}\
 <div class=\"prose-news flex flex-col gap-3 border-y border-line/50 py-3 text-sm leading-relaxed text-dim\">{html}</div>\
+{videos}\
 <label class=\"flex flex-col gap-1.5\">\
 <span class=\"label text-faint\">Note (required to reject)</span>\
 <textarea data-note rows=\"2\" placeholder=\"What is wrong with it?\" class=\"w-full border border-line/70 bg-void/60 px-3 py-2 text-sm text-ink\"></textarea>\
@@ -408,11 +406,16 @@ fn review_queue(pending: &[Post]) -> String {
 </div>\
 </div></li>",
             id = post.id,
-            kind = escape(post.kind.label()),
-            date = escape(&iso_date(post.created_at)),
+            phrase = post.kind.phrase(),
+            date = escape(&human_date(post.created_at)),
             author = escape(&post.author_name),
-            title = escape(&post.title),
+            title = if post.title.is_empty() {
+                String::new()
+            } else {
+                format!("<h2 class=\"heading text-xl text-ink\">{}</h2>", escape(&post.title))
+            },
             html = post.body_html,
+            videos = video_grid(&post.videos),
         ));
     }
 
@@ -430,225 +433,103 @@ fn review_queue(pending: &[Post]) -> String {
     )
 }
 
-/// The reader's own unpublished post, in the feed with an honest label.
-fn awaiting_card(post: &Post) -> String {
-    let path = escape(&post.path());
-    format!(
-        "<li class=\"border border-amber/40 bg-carbon/40\">\
-<a class=\"block p-5\" href=\"{path}\">\
-<div class=\"flex flex-wrap items-center gap-3\">\
-<span class=\"label border border-line/70 px-1.5 py-0.5 text-faint\">{kind}</span>\
-<span class=\"label border border-amber/50 px-1.5 py-0.5 text-amber\">Waiting for review</span>\
-<span class=\"label text-faint\">{date}</span>\
-</div>\
-<h2 class=\"heading mt-2 text-xl text-ink\">{title}</h2>\
-<p class=\"mt-1 text-sm text-dim\">Only you (and a moderator) can see this until it is approved.</p>\
-</a></li>",
-        kind = escape(post.kind.label()),
-        date = escape(&iso_date(post.created_at)),
-        title = escape(&post.title),
-    )
-}
-
-fn card(post: &Post) -> String {
-    let path = escape(&post.path());
-    let summary = if post.summary.is_empty() {
-        excerpt(&post.body_markdown)
-    } else {
-        post.summary.clone()
-    };
-    let mut sub = String::new();
-    if !summary.is_empty() {
-        sub = format!(
-            "<p class=\"mt-1 line-clamp-2 text-sm leading-relaxed text-dim\">{}</p>",
-            escape(&summary)
-        );
-    }
-    format!(
-        "<li class=\"border border-line/60 bg-carbon/40 transition-colors hover:border-ember/40\">\
-<a class=\"block p-5\" href=\"{path}\">\
-<div class=\"flex flex-wrap items-center gap-3\">\
-<span class=\"label border border-line/70 px-1.5 py-0.5 text-faint\">{kind}</span>\
-<span class=\"label text-faint\">{date}</span>\
-</div>\
-<h2 class=\"heading mt-2 text-xl text-ink\">{title}</h2>{sub}\
-<div class=\"label mt-3 flex items-center gap-3 text-faint\"><span>{author}</span><span>👍 {thumbs}</span></div>\
-</a></li>",
-        kind = escape(post.kind.label()),
-        date = escape(&iso_date(post.created_at)),
-        title = escape(&post.title),
-        author = escape(&post.author_name),
-        thumbs = post.thumbs_up,
-    )
-}
-
-pub fn post_page(
-    post: &Post,
-    reacted: bool,
-    pending: bool,
-    chrome: &Chrome,
-    stylesheets: &[String],
-    base: &str,
-) -> String {
-    let path = post.path();
-    let canonical = format!("{base}{path}");
-    let description = if post.summary.is_empty() {
-        format!(
-            "{} — a {} post on The Commonwealth.",
-            post.title,
-            post.kind.label()
-        )
-    } else {
-        post.summary.clone()
-    };
-
-    // Structured data: what a crawler reads to know this is an article and when
-    // it was published.
-    let head = format!(
-        "<script type=\"application/ld+json\">{{\"@context\":\"https://schema.org\",\"@type\":\"Article\",\"headline\":\"{}\",\"description\":\"{}\",\"datePublished\":\"{}\",\"dateModified\":\"{}\",\"author\":{{\"@type\":\"Person\",\"name\":\"{}\"}},\"publisher\":{{\"@type\":\"Organization\",\"name\":\"The Commonwealth\"}},\"mainEntityOfPage\":\"{}\"}}</script>",
-        json_escape(&post.title),
-        json_escape(&description),
-        iso_date(post.created_at),
-        iso_date(post.reviewed_at.unwrap_or(post.created_at)),
-        json_escape(&post.author_name),
-        json_escape(&canonical),
+/// A full entry: who posted what and when, the body, the videos, a thumbs-up.
+/// There is no detail page — the feed is the page.
+fn card(post: &Post, reacted: bool, pending: bool) -> String {
+    let mut header = format!(
+        "<p class=\"label text-faint\"><span class=\"{} \">{}</span> posted {} · <time datetime=\"{}\">{}</time></p>",
+        if pending { "text-amber" } else { "text-dim" },
+        escape(&post.author_name),
+        post.kind.phrase(),
+        escape(&iso_date(post.created_at)),
+        escape(&human_date(post.created_at)),
     );
-
-    let mut body = String::new();
     if pending {
-        body.push_str(
-            "<div class=\"mb-6 border border-amber/40 bg-carbon/40 p-4 text-sm text-dim\">This post is waiting for a moderator to review it. Only you can see it for now.</div>",
+        header.push_str(
+            "<p class=\"label mt-1 text-amber\">Waiting for review — only you and a moderator can see this.</p>",
         );
     }
 
-    body.push_str(&format!(
-        "<nav class=\"label text-faint\"><a class=\"hover:text-ember\" href=\"/news\">News</a> / {kind}</nav>\
-<article class=\"mt-4\">\
-<header class=\"border-b border-line/60 pb-6\">\
-<div class=\"flex flex-wrap items-center gap-3\">\
-<span class=\"label border border-line/70 px-1.5 py-0.5 text-faint\">{kind}</span>\
-<time class=\"label text-faint\" datetime=\"{stamp}\">{date}</time>\
-</div>\
-<h1 class=\"heading mt-3 text-3xl text-ink sm:text-4xl\">{title}</h1>\
-{summary}\
-<p class=\"label mt-4 text-faint\">By {author}</p>\
-</header>\
-<div class=\"prose-news mt-8 text-base leading-relaxed text-dim\">{html}</div>\
-{media}\
-{reactions}\
-</article>",
-        kind = escape(post.kind.label()),
-        stamp = escape(&iso_date(post.created_at)),
-        date = escape(&human_date(post.created_at)),
-        title = escape(&post.title),
-        summary = if post.summary.is_empty() {
-            String::new()
-        } else {
-            format!(
-                "<p class=\"mt-3 text-base leading-relaxed text-dim\">{}</p>",
-                escape(&post.summary)
-            )
-        },
-        author = escape(&post.author_name),
-        html = post.body_html,
-        media = media(post),
-        reactions = reactions(post, reacted),
-    ));
-
-    let meta = Meta {
-        title: &post.title,
-        description: &description,
-        canonical: &canonical,
-        site_url: base,
-        stylesheets,
-        head,
-        active: "/news",
-        signed_in_as: chrome.signed_in_as,
-        status: chrome.status,
+    let title = if post.title.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<h2 class=\"heading mt-2 text-2xl text-ink\">{}</h2>",
+            escape(&post.title)
+        )
     };
-    document(&meta, &body)
+
+    let summary = if post.summary.is_empty() || post.videos.is_empty() {
+        // A written post's summary is for search results, not for the reader who
+        // is already here and can see the body.
+        String::new()
+    } else {
+        format!(
+            "<p class=\"mt-2 text-sm leading-relaxed text-dim\">{}</p>",
+            escape(&post.summary)
+        )
+    };
+
+    let body = if post.body_html.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<div class=\"prose-news mt-4 flex flex-col gap-3 text-base leading-relaxed text-dim\">{}</div>",
+            post.body_html
+        )
+    };
+
+    format!(
+        "<li id=\"post-{id}\" class=\"border {} bg-carbon/40 p-5\">{header}{title}{summary}{body}{videos}{reactions}</li>",
+        if pending {
+            "border-amber/40"
+        } else {
+            "border-line/60"
+        },
+        id = post.id,
+        videos = video_grid(&post.videos),
+        reactions = reactions(post, reacted),
+    )
 }
 
-/// A video embed or an outbound link, when the post has one.
-fn media(post: &Post) -> String {
-    if let Some(id) = &post.video_id {
+/// Video embeds, side by side when there is room. The privacy-preserving domain,
+/// so a reader who never presses play is not tracked.
+fn video_grid(videos: &[String]) -> String {
+    if videos.is_empty() {
+        return String::new();
+    }
+    let columns = if videos.len() > 1 {
+        "sm:grid-cols-2"
+    } else {
+        "grid-cols-1"
+    };
+    let mut out = format!("<div class=\"mt-4 grid gap-3 {columns}\">");
+    for id in videos {
         let id = escape(id);
-        return format!(
-            "<div class=\"mt-8 border border-line/60\"><iframe class=\"aspect-video w-full\" src=\"https://www.youtube-nocookie.com/embed/{id}\" title=\"Video\" loading=\"lazy\" allow=\"accelerometer; encrypted-media; picture-in-picture\" allowfullscreen></iframe></div>\
-<p class=\"label mt-2 text-faint\"><a class=\"hover:text-ember\" href=\"{}\" target=\"_blank\" rel=\"noopener noreferrer\">Watch on YouTube</a></p>",
-            escape(post.link.as_deref().unwrap_or("https://www.youtube.com"))
-        );
+        out.push_str(&format!(
+            "<div class=\"border border-line/60\"><iframe class=\"aspect-video w-full\" \
+src=\"https://www.youtube-nocookie.com/embed/{id}\" title=\"Video\" loading=\"lazy\" \
+allow=\"accelerometer; encrypted-media; picture-in-picture\" allowfullscreen></iframe></div>"
+        ));
     }
-    match post.link.as_deref() {
-        Some(link) => format!(
-            "<p class=\"mt-8 text-sm\"><a class=\"text-ember underline decoration-ember/40 underline-offset-4\" href=\"{}\" target=\"_blank\" rel=\"noopener noreferrer nofollow\">Read the original</a></p>",
-            escape(link)
-        ),
-        None => String::new(),
-    }
+    out.push_str("</div>");
+    out
 }
 
-/// Thumbs up. The count is rendered server-side; the button upgrades it to a
-/// toggle with a small amount of JavaScript, so the number is correct even
-/// without it.
 fn reactions(post: &Post, reacted: bool) -> String {
     format!(
-        "<div class=\"mt-10 flex items-center gap-4 border-t border-line/60 pt-6\">\
-<button type=\"button\" id=\"thumb\" data-post=\"{id}\" data-active=\"{active}\" aria-pressed=\"{active}\" \
-class=\"heading flex items-center gap-2 border border-line/70 px-4 py-2 text-sm tracking-[0.1em] text-dim transition-colors hover:border-ember/60 hover:text-ink\">\
-<span aria-hidden=\"true\">👍</span><span id=\"thumb-count\">{count}</span>\
+        "<div class=\"mt-5 flex items-center gap-4 border-t border-line/70 pt-4\">\
+<button type=\"button\" data-thumb-post=\"{id}\" data-thumb-active=\"{active}\" aria-pressed=\"{active}\" \
+aria-label=\"Thumbs up\" class=\"heading flex items-center gap-2 border border-line/70 px-3 py-1.5 text-sm tracking-[0.1em] text-dim transition-colors hover:border-ember/60 hover:text-ink\">\
+<span aria-hidden=\"true\">👍</span><span data-thumb-count=\"{id}\">{count}</span>\
 </button>\
-<span class=\"label text-faint\" id=\"thumb-note\"></span>\
+<span class=\"label text-faint\" data-thumb-note=\"{id}\"></span>\
 </div>",
         id = post.id,
         active = reacted,
         count = post.thumbs_up,
     )
 }
-
-/// Plain-text preview of a body, for cards that have no summary.
-fn excerpt(markdown_source: &str) -> String {
-    let mut out = String::new();
-    let mut last_space = true;
-    for ch in markdown_source.chars() {
-        let ch = match ch {
-            '#' | '*' | '_' | '`' | '>' | '[' | ']' | '(' | ')' | '!' | '\\' => continue,
-            '\n' | '\r' | '\t' => ' ',
-            other => other,
-        };
-        if ch == ' ' {
-            if last_space {
-                continue;
-            }
-            last_space = true;
-        } else {
-            last_space = false;
-        }
-        out.push(ch);
-        if out.chars().count() >= 180 {
-            out.push('…');
-            break;
-        }
-    }
-    out.trim().to_string()
-}
-
-fn json_escape(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for ch in text.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' | '\r' | '\t' => out.push(' '),
-            '<' => out.push_str("\\u003c"),
-            '>' => out.push_str("\\u003e"),
-            '&' => out.push_str("\\u0026"),
-            other => out.push(other),
-        }
-    }
-    out
-}
-
 /// `2026-11-11` — the `datetime` attribute and structured data.
 pub fn iso_date(ts: i64) -> String {
     let (year, month, day) = civil_from_unix(ts);
@@ -701,19 +582,26 @@ pub fn formatting_help() -> &'static str {
 mod tests {
     use super::*;
     use crate::news::{Kind, Status};
+    use std::collections::HashSet;
     use std::path::Path;
 
-    fn sample_post() -> Post {
+    const BASE: &str = "https://example.test";
+
+    fn styles() -> Vec<String> {
+        vec!["/_app/immutable/assets/0.css".to_string()]
+    }
+
+    fn article() -> Post {
         Post {
             id: 12,
-            kind: Kind::Guide,
-            title: "Solo the Surfside bunker <script>".to_string(),
-            slug: "solo-the-surfside-bunker-script".to_string(),
+            kind: Kind::Article,
+            title: "Surfside bunker, solo".to_string(),
+            slug: "surfside-bunker-solo".to_string(),
             summary: String::new(),
             body_markdown: "## Prep\n\nBring **two** medkits.".to_string(),
             body_html: crate::news::markdown::to_html("## Prep\n\nBring **two** medkits."),
             link: None,
-            video_id: None,
+            videos: Vec::new(),
             status: Status::Approved,
             author_id: 7,
             author_name: "Agent07".to_string(),
@@ -725,241 +613,196 @@ mod tests {
         }
     }
 
-    /// A feed page with no pending posts and no moderator, for the tests that
-    /// are about the posts themselves.
-    fn feed_page(posts: &[Post], hint: PostingHint, chrome: &Chrome) -> String {
-        let data = FeedData {
-            approved: posts,
-            pending: &[],
-            moderator: false,
-            hint,
-        };
-        feed(&data, chrome, &styles(), "https://example.test")
+    fn video(ids: &[&str]) -> Post {
+        Post {
+            id: 20,
+            kind: Kind::Video,
+            title: String::new(),
+            slug: "video".to_string(),
+            summary: String::new(),
+            body_markdown: String::new(),
+            body_html: String::new(),
+            link: Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_string()),
+            videos: ids.iter().map(|id| (*id).to_string()).collect(),
+            status: Status::Approved,
+            author_id: 8,
+            author_name: "Agent08".to_string(),
+            created_at: 1_764_100_000,
+            reviewed_by_name: None,
+            reviewed_at: Some(1_764_100_060),
+            moderation_note: None,
+            thumbs_up: 0,
+        }
     }
 
-    fn styles() -> Vec<String> {
-        vec!["/_app/immutable/assets/0.css".to_string()]
-    }
-
-    #[test]
-    fn the_post_page_is_a_complete_document_with_crawlable_metadata() {
-        let page = post_page(
-            &sample_post(),
-            true,
-            false,
-            &Chrome::default(),
-            &styles(),
-            "https://example.test",
-        );
-
-        assert!(
-            page.starts_with("<!doctype html>"),
-            "a full document, not a fragment"
-        );
-        assert!(page.contains("<link rel=\"canonical\" href=\"https://example.test/news/12-solo-the-surfside-bunker-script\">"), "{page}");
-        assert!(
-            page.contains("<meta name=\"description\""),
-            "a description for the snippet"
-        );
-        assert!(
-            page.contains("\"@type\":\"Article\""),
-            "structured data: {page}"
-        );
-        assert!(page.contains("<h1 "), "exactly one meaningful heading");
-        assert_eq!(page.matches("<h1 ").count(), 1);
-        assert!(page.contains("<time "), "a machine-readable date");
-        assert!(
-            page.contains("datetime=\"2025-11-"),
-            "ISO date in datetime: {page}"
-        );
-        assert!(
-            page.contains("/_app/immutable/assets/0.css"),
-            "the site's stylesheet"
-        );
-    }
-
-    #[test]
-    fn a_title_cannot_inject_markup_or_break_the_structured_data() {
-        let page = post_page(
-            &sample_post(),
-            false,
-            false,
-            &Chrome::default(),
-            &styles(),
-            "https://example.test",
-        );
-        assert!(!page.contains("<script>alert"), "{page}");
-        assert!(
-            page.contains("&lt;script&gt;"),
-            "the title is escaped: {page}"
-        );
-        // The JSON-LD block stays parseable: one script tag, quotes escaped.
-        assert_eq!(
-            page.matches("<script type=\"application/ld+json\">")
-                .count(),
-            1
-        );
-    }
-
-    #[test]
-    fn pending_posts_say_so_on_their_page() {
-        let page = post_page(
-            &sample_post(),
-            false,
-            true,
-            &Chrome::default(),
-            &styles(),
-            "https://example.test",
-        );
-        assert!(page.contains("waiting for a moderator"), "{page}");
-        let published = post_page(
-            &sample_post(),
-            false,
-            false,
-            &Chrome::default(),
-            &styles(),
-            "https://example.test",
-        );
-        assert!(!published.contains("waiting for a moderator"));
-    }
-
-    #[test]
-    fn the_feed_lists_posts_and_explains_the_rules() {
-        let hint = PostingHint {
-            mode: "open",
-            signed_in: false,
-            may_post: false,
-            reason: Some("Sign in with your game account to submit a post.".to_string()),
-        };
-        let page = feed_page(&[sample_post()], hint, &Chrome::default());
-        assert!(page.contains("href=\"/news/12-solo-the-surfside-bunker-script\""));
-        assert!(page.contains("Guide"));
-        assert!(page.contains("Sign in"), "the reason is shown");
-        assert!(
-            !page.contains("Write a post"),
-            "no form link for anonymous readers"
-        );
-
-        let hint = PostingHint {
-            mode: "open",
-            signed_in: true,
-            may_post: true,
-            reason: None,
-        };
-        let page = feed_page(&[sample_post()], hint, &Chrome::default());
-        assert!(page.contains("Write a post"), "{page}");
-        assert!(page.contains("href=\"/news/submit\""));
-    }
-
-    #[test]
-    fn an_empty_feed_still_renders_a_page() {
-        let hint = PostingHint {
-            mode: "open",
-            signed_in: true,
-            may_post: true,
-            reason: None,
-        };
-        let page = feed_page(&[], hint, &Chrome::default());
-        assert!(page.contains("Nothing published yet"), "{page}");
-    }
-
-    fn pending_post() -> Post {
-        let mut post = sample_post();
+    fn pending_article() -> Post {
+        let mut post = article();
         post.status = Status::Pending;
         post.title = "Awaiting a decision".to_string();
-        post.slug = "awaiting-a-decision".to_string();
         post
     }
 
-    #[test]
-    fn a_moderator_sees_the_queue_on_the_feed_with_its_controls() {
-        let queue = [pending_post()];
+    fn hint() -> PostingHint {
+        PostingHint {
+            mode: "open",
+            signed_in: true,
+            may_post: true,
+            reason: None,
+        }
+    }
+
+    fn feed_page(approved: &[Post], pending: &[Post], moderator: bool) -> String {
+        let reacted = HashSet::new();
         let data = FeedData {
-            approved: &[],
-            pending: &queue,
-            moderator: true,
+            approved,
+            pending,
+            moderator,
+            reacted: &reacted,
             hint: hint(),
         };
-        let page = feed(&data, &Chrome::default(), &styles(), "https://example.test");
-
-        assert!(
-            page.contains("Waiting for review"),
-            "the section is on the feed"
-        );
-        assert!(page.contains("1 pending"));
-        assert!(page.contains("Awaiting a decision"), "the post itself");
-        assert!(
-            page.contains("<h2>Prep</h2>"),
-            "with its rendered body to judge"
-        );
-        assert!(page.contains("data-action=\"approve\""), "{page}");
-        assert!(page.contains("data-action=\"reject\""));
-        assert!(
-            page.contains("data-note"),
-            "a rejection needs somewhere to write the reason"
-        );
-        // The empty-feed line knows about the queue rather than contradicting it.
-        assert!(
-            page.contains("the queue above is waiting for your review"),
-            "{page}"
-        );
-        assert!(!page.contains("The first post could be yours."));
+        feed(&data, &Chrome::default(), &styles(), BASE)
     }
 
     #[test]
-    fn a_reader_sees_their_own_pending_post_marked_as_waiting() {
-        let mine = [pending_post()];
+    fn the_feed_shows_whole_entries_not_teasers() {
+        // No detail page: what a reader sees here is the post.
+        let page = feed_page(&[article()], &[], false);
+        assert!(page.contains("Surfside bunker, solo"), "the title");
+        assert!(
+            page.contains("<h2>Prep</h2>"),
+            "the rendered body, in full: {page}"
+        );
+        assert!(page.contains("<strong>two</strong>"), "with its formatting");
+        assert!(
+            !page.contains("href=\"/news/12-surfside-bunker-solo\""),
+            "and no link to a page that no longer exists"
+        );
+        assert!(page.contains("id=\"post-12\""), "an anchor for the entry");
+    }
+
+    #[test]
+    fn each_entry_is_headlined_with_who_posted_what_and_when() {
+        let page = feed_page(&[article()], &[], false);
+        assert!(
+            page.contains("Agent07</span> posted an article"),
+            "the header line: {page}"
+        );
+        assert!(page.contains("24 November 2025"), "with the date");
+
+        let page = feed_page(&[video(&["dQw4w9WgXcQ"])], &[], false);
+        assert!(page.contains("Agent08</span> posted a video"), "{page}");
+
+        let mut update = article();
+        update.kind = Kind::Update;
+        let page = feed_page(&[update], &[], false);
+        assert!(page.contains("posted a server update"), "{page}");
+
+        let mut news = article();
+        news.kind = Kind::News;
+        let page = feed_page(&[news], &[], false);
+        assert!(page.contains("posted news"), "{page}");
+    }
+
+    #[test]
+    fn a_video_entry_is_embeds_and_nothing_else() {
+        let page = feed_page(&[video(&["dQw4w9WgXcQ"])], &[], false);
+        assert!(
+            page.contains("youtube-nocookie.com/embed/dQw4w9WgXcQ"),
+            "the privacy-preserving embed: {page}"
+        );
+        assert_eq!(page.matches("<iframe").count(), 1);
+        assert!(
+            !page.contains("<h2 class=\"heading mt-2 text-2xl"),
+            "no invented title: {page}"
+        );
+    }
+
+    #[test]
+    fn several_videos_sit_side_by_side() {
+        let page = feed_page(&[video(&["dQw4w9WgXcQ", "aaaaaaaaaaa"])], &[], false);
+        assert_eq!(page.matches("<iframe").count(), 2);
+        assert!(
+            page.contains("sm:grid-cols-2"),
+            "two per row when there is room"
+        );
+    }
+
+    #[test]
+    fn every_entry_carries_its_own_thumbs_up() {
+        let mut reacted = HashSet::new();
+        reacted.insert(12);
         let data = FeedData {
-            approved: &[],
-            pending: &mine,
+            approved: &[article()],
+            pending: &[],
             moderator: false,
+            reacted: &reacted,
             hint: hint(),
         };
-        let page = feed(&data, &Chrome::default(), &styles(), "https://example.test");
+        let page = feed(&data, &Chrome::default(), &styles(), BASE);
 
+        assert!(page.contains("data-thumb-post=\"12\""), "{page}");
+        assert!(
+            page.contains("data-thumb-count=\"12\">3"),
+            "the count: {page}"
+        );
+        assert!(
+            page.contains("data-thumb-active=\"true\""),
+            "and this reader's own reaction is reflected"
+        );
+        // One button per entry, not one per page.
+        assert_eq!(page.matches("data-thumb-post=").count(), 1);
+    }
+
+    #[test]
+    fn the_authors_own_pending_entry_is_marked_and_has_no_controls() {
+        let page = feed_page(&[], &[pending_article()], false);
         assert!(
             page.contains("Awaiting a decision"),
             "their own post is visible"
         );
-        assert!(page.contains("Waiting for review"), "and labelled");
+        assert!(page.contains("Waiting for review"), "{page}");
         assert!(
-            page.contains("Only you (and a moderator) can see this"),
-            "with the reason it is not public"
+            page.contains("only you and a moderator can see this"),
+            "with the reason"
         );
-        assert!(
-            !page.contains("data-action=\"approve\""),
-            "an author must not approve their own post: {page}"
-        );
-        assert!(!page.contains("data-note"));
+        assert!(!page.contains("data-action=\"approve\""), "{page}");
     }
 
     #[test]
-    fn a_reader_with_nothing_pending_sees_no_queue_and_no_notices() {
-        let data = FeedData {
-            approved: &[sample_post()],
-            pending: &[],
-            moderator: false,
-            hint: hint(),
-        };
-        let page = feed(&data, &Chrome::default(), &styles(), "https://example.test");
-        assert!(!page.contains("Waiting for review"));
-        assert!(!page.contains("data-action"));
-        assert!(page.contains("solo-the-surfside-bunker-script"));
+    fn a_moderator_sees_the_queue_with_controls_and_embeds() {
+        let queue = [pending_article(), {
+            let mut p = video(&["dQw4w9WgXcQ"]);
+            p.status = Status::Pending;
+            p
+        }];
+        let page = feed_page(&[], &queue, true);
+        assert!(page.contains("Waiting for review"), "{page}");
+        assert!(page.contains("2 pending"));
+        assert!(page.contains("data-action=\"approve\""), "{page}");
+        assert!(page.contains("data-action=\"reject\""));
+        assert!(page.contains("data-note"), "somewhere to write the reason");
+        assert!(
+            page.contains("youtube-nocookie.com/embed/dQw4w9WgXcQ"),
+            "a video submitted for review can be watched before deciding"
+        );
+        assert!(
+            page.contains("the queue above is waiting for your review"),
+            "the empty-feed line does not contradict the queue"
+        );
     }
 
     #[test]
-    fn the_queue_escapes_what_it_renders() {
-        let mut post = pending_post();
+    fn nothing_is_published_says_so() {
+        let page = feed_page(&[], &[], false);
+        assert!(page.contains("Nothing published yet. The first post could be yours."));
+    }
+
+    #[test]
+    fn user_text_is_escaped_wherever_it_lands() {
+        let mut post = article();
         post.title = "<img src=x onerror=alert(1)>".to_string();
         post.author_name = "\"quoted\"".to_string();
-        let queue = [post];
-        let data = FeedData {
-            approved: &[],
-            pending: &queue,
-            moderator: true,
-            hint: hint(),
-        };
-        let page = feed(&data, &Chrome::default(), &styles(), "https://example.test");
+        let page = feed_page(&[post], &[], false);
         assert!(!page.contains("<img src=x"), "{page}");
         assert!(page.contains("&lt;img src=x"));
         assert!(page.contains("&quot;quoted&quot;"));
@@ -971,42 +814,18 @@ mod tests {
         // braces mangled, the browser dropped the whole script on a syntax
         // error, and the approve button did nothing at all. Every page now
         // points at one checked file instead.
-        let queue = [pending_post()];
-        let data = FeedData {
-            approved: &[sample_post()],
-            pending: &queue,
-            moderator: true,
-            hint: hint(),
-        };
-        let pages = [
-            feed(&data, &Chrome::default(), &styles(), "https://example.test"),
-            post_page(
-                &sample_post(),
-                false,
-                false,
-                &Chrome::default(),
-                &styles(),
-                "https://example.test",
-            ),
-        ];
-
-        for page in pages {
-            assert!(
-                page.contains("<script src=\"/news-admin.js\" defer></script>"),
-                "every page loads the shared script"
-            );
-            // The only inline script allowed is structured data, which is JSON.
-            let inline: Vec<&str> = page
-                .split("<script>")
-                .skip(1)
-                .filter_map(|rest| rest.split("</script>").next())
-                .collect();
-            assert!(
-                inline.is_empty(),
-                "no inline behaviour scripts: found {:?}",
-                inline.first().map(|body| &body[..body.len().min(60)])
-            );
-        }
+        let queue = [pending_article()];
+        let page = feed_page(&[article()], &queue, true);
+        assert!(
+            page.contains("<script src=\"/news-admin.js\" defer></script>"),
+            "the page loads the shared script"
+        );
+        let inline: Vec<&str> = page
+            .split("<script>")
+            .skip(1)
+            .filter_map(|rest| rest.split("</script>").next())
+            .collect();
+        assert!(inline.is_empty(), "no inline behaviour scripts: {inline:?}");
     }
 
     #[test]
@@ -1021,56 +840,51 @@ mod tests {
     }
 
     #[test]
-    fn a_video_post_embeds_through_the_privacy_preserving_domain() {
-        let mut post = sample_post();
-        post.kind = Kind::Video;
-        post.video_id = Some("dQw4w9WgXcQ".to_string());
-        post.link = Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_string());
-        let page = post_page(
-            &post,
-            false,
-            false,
-            &Chrome::default(),
-            &styles(),
-            "https://example.test",
-        );
+    fn the_feed_has_crawlable_metadata() {
+        let page = feed_page(&[article()], &[], false);
+        assert!(page.starts_with("<!doctype html>"));
         assert!(
-            page.contains("youtube-nocookie.com/embed/dQw4w9WgXcQ"),
+            page.contains("<title>News · The Commonwealth</title>"),
             "{page}"
         );
-        assert!(page.contains("Watch on YouTube"));
+        assert!(
+            page.contains("<link rel=\"canonical\" href=\"https://example.test/news\">"),
+            "{page}"
+        );
+        assert!(page.contains("<meta name=\"description\""));
+        assert_eq!(page.matches("<h1").count(), 1, "one h1 for the page");
     }
 
     #[test]
     fn the_header_shows_who_is_signed_in() {
-        // The bug this pins: the page rendered "Sign in" to a signed-in reader,
-        // because the chrome was built without their name.
         let signed_in = Chrome {
             signed_in_as: Some("Agent07"),
-            status: None,
+            status: Some("3 agents in-game"),
         };
-        let page = feed_page(&[sample_post()], hint(), &signed_in);
-        assert!(
-            page.contains("Agent07"),
-            "the account name is in the header"
-        );
-        assert!(
-            page.contains("href=\"/me\""),
-            "the account chip links to the player page: {page}"
-        );
-        // Scoped to the header: the posting hint below can legitimately tell an
-        // anonymous reader to sign in, and this test is about the account chip.
+        let reacted = HashSet::new();
+        let data = FeedData {
+            approved: &[article()],
+            pending: &[],
+            moderator: false,
+            reacted: &reacted,
+            hint: hint(),
+        };
+        let page = feed(&data, &signed_in, &styles(), BASE);
+
         let header = page
             .split("<header")
             .nth(1)
             .and_then(|rest| rest.split("</header>").next())
             .expect("the page has a header");
+        assert!(header.contains("Agent07"), "the account chip: {header}");
+        assert!(header.contains("href=\"/me\""));
         assert!(
             !header.contains("Sign in"),
-            "a signed-in reader is not offered sign-in: {header}"
+            "not offered to a signed-in reader"
         );
+        assert!(header.contains("3 agents in-game"), "and the live chip");
 
-        let anonymous = feed_page(&[sample_post()], hint(), &Chrome::default());
+        let anonymous = page_with_chrome(&Chrome::default());
         let anonymous_header = anonymous
             .split("<header")
             .nth(1)
@@ -1079,34 +893,21 @@ mod tests {
         assert!(anonymous_header.contains("Sign in"), "{anonymous_header}");
     }
 
-    #[test]
-    fn the_header_carries_the_live_status_chip() {
-        let live = Chrome {
-            signed_in_as: None,
-            status: Some("3 agents in-game"),
+    fn page_with_chrome(chrome: &Chrome) -> String {
+        let reacted = HashSet::new();
+        let data = FeedData {
+            approved: &[article()],
+            pending: &[],
+            moderator: false,
+            reacted: &reacted,
+            hint: hint(),
         };
-        let page = feed_page(&[], hint(), &live);
-        assert!(
-            page.contains("3 agents in-game"),
-            "the chip says what the server knows"
-        );
-        assert!(
-            page.contains("href=\"/server\""),
-            "and links to the status page"
-        );
-
-        let unknown = feed_page(&[], hint(), &Chrome::default());
-        assert!(
-            unknown.contains("linking"),
-            "no status yet renders the placeholder, not a wrong count"
-        );
+        feed(&data, chrome, &styles(), BASE)
     }
 
     #[test]
     fn the_chrome_is_the_sites_chrome_not_a_plainer_one() {
-        // What was missing when the page first shipped: the sigil, the tagline,
-        // the backdrop and the footer's third column.
-        let page = feed_page(&[], hint(), &Chrome::default());
+        let page = page_with_chrome(&Chrome::default());
         assert!(page.contains(HEX_MARK_OUTER), "the hex mark: {page}");
         assert!(
             page.contains("Global Agenda community server"),
@@ -1120,15 +921,10 @@ mod tests {
         ] {
             assert!(page.contains(expected), "footer is missing {expected}");
         }
-    }
-
-    fn hint() -> PostingHint {
-        PostingHint {
-            mode: "open",
-            signed_in: false,
-            may_post: false,
-            reason: Some("Sign in with your game account to submit a post.".to_string()),
-        }
+        assert!(
+            page.contains("max-w-6xl px-4 py-12"),
+            "the same page width as every other page"
+        );
     }
 
     /// The chrome is duplicated between Rust and Svelte; this is what stops the
@@ -1141,7 +937,6 @@ mod tests {
         let source = std::fs::read_to_string(&nav_path)
             .unwrap_or_else(|error| panic!("read {}: {error}", nav_path.display()));
 
-        // `{ href: '/play', label: 'Get started' }` entries in the links array.
         let mut svelte_links: Vec<(String, String)> = Vec::new();
         for line in source.lines() {
             let Some(start) = line.find("href: '") else {
@@ -1171,27 +966,20 @@ mod tests {
             .collect();
 
         for (href, label) in &rust_links {
-            assert!(
-                svelte_links.iter().any(|(h, _)| h == href),
-                "{href} is in the news page header but not in Nav.svelte ({svelte_links:?})"
-            );
             let svelte_label = svelte_links
                 .iter()
                 .find(|(h, _)| h == href)
                 .map(|(_, l)| l.as_str())
-                .unwrap_or_default();
+                .unwrap_or_else(|| panic!("{href} is in the news header but not in Nav.svelte"));
             assert_eq!(
                 svelte_label, label,
                 "{href} is labelled {label:?} here and {svelte_label:?} in Nav.svelte"
             );
         }
-
-        // The reverse direction: every Svelte link must exist here too, or a
-        // visitor loses a way to navigate from the news pages.
         for (href, _) in &svelte_links {
             assert!(
                 rust_links.iter().any(|(h, _)| h == href),
-                "{href} is in Nav.svelte but missing from the news page header"
+                "{href} is in Nav.svelte but missing from the news header"
             );
         }
     }

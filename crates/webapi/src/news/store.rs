@@ -69,6 +69,25 @@ pub async fn migrate(pool: &SqlitePool) -> sqlx::Result<()> {
     .execute(pool)
     .await?;
 
+    // Videos live in their own table: a post may show several, and a
+    // comma-separated column would make the order unmaintainable.
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS news_videos (
+             post_id  INTEGER NOT NULL REFERENCES news_posts(id),
+             position INTEGER NOT NULL,
+             video_id TEXT    NOT NULL,
+             PRIMARY KEY (post_id, position)
+         )",
+    )
+    .execute(pool)
+    .await?;
+
+    // `guide` is no longer a kind (guides get their own page later). Anything
+    // written before that reads as an article rather than as an unknown kind.
+    sqlx::query("UPDATE news_posts SET kind = 'article' WHERE kind = 'guide'")
+        .execute(pool)
+        .await?;
+
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS news_audit (
              id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -103,7 +122,8 @@ pub struct Post {
     pub body_markdown: String,
     pub body_html: String,
     pub link: Option<String>,
-    pub video_id: Option<String>,
+    /// YouTube ids in author order. Empty for written posts.
+    pub videos: Vec<String>,
     pub status: Status,
     pub author_id: i64,
     pub author_name: String,
@@ -123,11 +143,34 @@ impl Post {
 
 const SELECT: &str = "SELECT p.id, p.kind, p.title, p.slug, p.summary, p.body_markdown,
                              p.body_html, p.link, p.video_id, p.status, p.author_id,
+                             (SELECT GROUP_CONCAT(video_id, char(31)) FROM (
+                                  SELECT video_id FROM news_videos v
+                                  WHERE v.post_id = p.id ORDER BY v.position
+                              )) AS videos,
                              p.author_name, p.created_at, p.reviewed_by_name,
                              p.reviewed_at, p.moderation_note,
                              (SELECT COUNT(*) FROM news_reactions r WHERE r.post_id = p.id)
                                 AS thumbs_up
                       FROM news_posts p";
+
+/// The post's videos, falling back to the legacy single `video_id` column for
+/// rows written before `news_videos` existed.
+fn videos_of(row: &sqlx::sqlite::SqliteRow) -> Vec<String> {
+    let joined: Option<String> = row.get("videos");
+    let parsed: Vec<String> = joined
+        .unwrap_or_default()
+        .split('\u{1f}')
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+        .collect();
+    if !parsed.is_empty() {
+        return parsed;
+    }
+    match row.get::<Option<String>, _>("video_id") {
+        Some(id) if !id.is_empty() => vec![id],
+        _ => Vec::new(),
+    }
+}
 
 fn row_to_post(row: &sqlx::sqlite::SqliteRow) -> Post {
     Post {
@@ -141,7 +184,7 @@ fn row_to_post(row: &sqlx::sqlite::SqliteRow) -> Post {
         body_markdown: row.get("body_markdown"),
         body_html: row.get("body_html"),
         link: row.get("link"),
-        video_id: row.get("video_id"),
+        videos: videos_of(row),
         status: Status::parse(row.get::<String, _>("status").as_str()).unwrap_or(Status::Pending),
         author_id: row.get("author_id"),
         author_name: row.get("author_name"),
@@ -173,7 +216,8 @@ pub async fn create(
     .bind(&entry.body_markdown)
     .bind(&entry.body_html)
     .bind(&entry.link)
-    .bind(&entry.video_id)
+    // First id in the legacy column, so an older reader still sees something.
+    .bind(entry.videos.first())
     .bind(Status::Pending.as_str())
     .bind(author_id)
     .bind(author_name)
@@ -181,7 +225,24 @@ pub async fn create(
     .execute(pool)
     .await?;
 
-    Ok(result.last_insert_rowid())
+    let id = result.last_insert_rowid();
+    attach_videos(pool, id, &entry.videos).await?;
+    Ok(id)
+}
+
+/// Store a post's videos in author order.
+pub async fn attach_videos(pool: &SqlitePool, post_id: i64, videos: &[String]) -> sqlx::Result<()> {
+    for (position, video_id) in videos.iter().enumerate() {
+        sqlx::query(
+            "INSERT OR REPLACE INTO news_videos (post_id, position, video_id) VALUES (?, ?, ?)",
+        )
+        .bind(post_id)
+        .bind(position as i64)
+        .bind(video_id)
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
 }
 
 /// Submissions by this account inside the window, not counting rejected ones:
@@ -463,7 +524,7 @@ mod tests {
     }
 
     fn entry(title: &str) -> Validated {
-        super::super::validate("news", title, "", "Body text", None).expect("valid entry")
+        super::super::validate("news", title, "", "Body text", &[]).expect("valid entry")
     }
 
     #[tokio::test]

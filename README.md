@@ -158,7 +158,8 @@ read-only, hence the writable default.
 | `/api/me/settings` | Your toggles (`GET`) and changes to them (`POST`), relayed to the control server |
 | `/api/me/settings/dlc` | Mark a DLC map pack installed/uninstalled (`POST`) |
 | `/db-export/<token>` | Redacted database download for third parties (the cards registry). Disabled unless `WEB_DB_EXPORT_TOKEN` is set |
-| `/news`, `/news/{id}-{slug}` | **Server-rendered HTML**, not JSON: the news feed and post pages, with canonical links, Open Graph tags and `Article` structured data. Crawlable because they cannot be prerendered |
+| `/news` | **Server-rendered HTML**, not JSON: the whole feed, every entry in full, with canonical link and Open Graph tags. Crawlable because it cannot be prerendered |
+| `/news/{id}-{slug}` | `301` to `/news#post-{id}`. Kept so an existing link keeps working; there is no per-post page |
 | `/sitemap.xml` | Generated: the static pages plus every published post. Served as `application/xml` |
 | `/api/news?limit=&offset=` | Published posts, plus whether *you* may submit |
 | `/api/news/mine` | Your own submissions and their moderation state |
@@ -217,7 +218,21 @@ cp surfside-atoll.zip files/ && curl -I http://127.0.0.1:8080/files/surfside-ato
 
 A community feed with pre-moderation: anyone signed in may submit, and nothing
 appears on the site until a moderator approves it. Posts live in `site.db`
-(`news_posts`, `news_reactions`, `news_audit`) — never in the game database.
+(`news_posts`, `news_videos`, `news_reactions`, `news_audit`) — never in the game
+database.
+
+**There is one page.** `/news` shows every entry in full — headlined
+"USERNAME posted an article · 24 November 2025" — with its body, its embeds and
+its thumbs-up button. There is no detail page: a post URL (`/news/12-slug`)
+redirects to the entry's anchor (`/news#post-12`), so old links still land
+somewhere sensible, and the sitemap lists `/news` rather than hundreds of
+URLs that only redirect.
+
+**Each kind asks for only what it needs.** `news`, `update` and `article` take a
+title, a summary and a Markdown body. `video` takes YouTube links and nothing
+else — no invented title, no empty body — up to six per post, laid out two to a
+row on a wide screen. `guide` is not a kind: guides get their own page later and
+will appear in this feed as "posted a guide".
 
 **Roles** are `ga_user_roles` rows, the same table that gates `spectator`, and
 this service only ever **reads** them. They are granted in the dashboard, which
@@ -245,6 +260,9 @@ the moderator's note; it disappears from the feed, the queue, the author's own
 list and the sitemap. Moderators can still open it by id for review. Rejection is
 final: a second reject or a re-approve is refused rather than overwriting the
 record.
+
+**Video posts carry no text**, so `news_videos` holds their ids in author order;
+the legacy `video_id` column keeps the first one for older readers.
 
 **Post bodies are a Markdown subset** rendered by `news::markdown` to HTML it
 writes itself — raw HTML is escaped and shown rather than interpreted, images are

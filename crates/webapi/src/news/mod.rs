@@ -25,29 +25,24 @@ pub mod store;
 use std::fmt;
 
 /// What kind of entry this is. Stored as text so a new kind needs no migration.
+///
+/// `Guide` is deliberately absent: guides get their own page later, and will be
+/// surfaced in this feed as "posted a guide" without being a kind here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     News,
     Update,
-    Guide,
     Article,
     Video,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 5] = [
-        Kind::News,
-        Kind::Update,
-        Kind::Guide,
-        Kind::Article,
-        Kind::Video,
-    ];
+    pub const ALL: [Kind; 4] = [Kind::News, Kind::Update, Kind::Article, Kind::Video];
 
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "news" => Some(Kind::News),
             "update" => Some(Kind::Update),
-            "guide" => Some(Kind::Guide),
             "article" => Some(Kind::Article),
             "video" => Some(Kind::Video),
             _ => None,
@@ -58,31 +53,44 @@ impl Kind {
         match self {
             Kind::News => "news",
             Kind::Update => "update",
-            Kind::Guide => "guide",
             Kind::Article => "article",
             Kind::Video => "video",
         }
     }
 
-    /// What the feed shows next to the title.
+    /// What the feed shows next to the title, if there is one.
     pub fn label(self) -> &'static str {
         match self {
             Kind::News => "News",
             Kind::Update => "Server update",
-            Kind::Guide => "Guide",
             Kind::Article => "Article",
             Kind::Video => "Video",
         }
     }
 
-    /// A video without a video is not a video.
+    /// How the feed's header line reads: "Zaxik posted a video".
+    pub fn phrase(self) -> &'static str {
+        match self {
+            Kind::News => "news",
+            Kind::Update => "a server update",
+            Kind::Article => "an article",
+            Kind::Video => "a video",
+        }
+    }
+
+    /// A video entry is links and nothing else.
     pub fn requires_link(self) -> bool {
         matches!(self, Kind::Video)
     }
 
-    /// A video's body is a caption; everything else needs to say something.
+    /// Everything except a video needs to say something in a body.
     pub fn requires_body(self) -> bool {
         !matches!(self, Kind::Video)
+    }
+
+    /// Whether the form should offer a title and an editor at all.
+    pub fn has_editor(self) -> bool {
+        self.requires_body()
     }
 }
 
@@ -161,6 +169,10 @@ pub const BODY_MAX: usize = 20_000;
 /// Slugs are for readers, not databases: long enough to read, short enough to fit.
 const SLUG_MAX: usize = 60;
 
+/// How many videos one post may embed. Two fit side by side on a wide screen;
+/// six is already a scroll.
+pub const MAX_VIDEOS: usize = 6;
+
 /// Submissions allowed per account per `RATE_WINDOW`, rejected ones excluded.
 pub const RATE_LIMIT: i64 = 5;
 pub const RATE_WINDOW_SECS: i64 = 24 * 3600;
@@ -176,6 +188,7 @@ pub enum DraftError {
     BodyTooLong,
     LinkRequired,
     LinkInvalid,
+    TooManyVideos,
 }
 
 impl DraftError {
@@ -189,6 +202,7 @@ impl DraftError {
             DraftError::BodyTooLong => "The body is too long (20,000 characters at most).",
             DraftError::LinkRequired => "A video entry needs a YouTube link.",
             DraftError::LinkInvalid => "That link is not a YouTube video address.",
+            DraftError::TooManyVideos => "That is more videos than one post can hold.",
         }
     }
 }
@@ -212,8 +226,9 @@ pub struct Validated {
     /// served later (`news::markdown` is the only thing that produces it).
     pub body_html: String,
     pub link: Option<String>,
-    /// YouTube id for `video` entries, for the embed.
-    pub video_id: Option<String>,
+    /// YouTube ids, in the order the author gave them. One for a video entry,
+    /// none otherwise — but a list, because a single post may show several.
+    pub videos: Vec<String>,
     /// Path fragment for `/news/{id}-{slug}`.
     pub slug: String,
 }
@@ -225,19 +240,57 @@ pub fn validate(
     title: &str,
     summary: &str,
     body_markdown: &str,
-    link: Option<&str>,
+    links: &[String],
 ) -> Result<Validated, DraftError> {
     let kind = Kind::parse(kind.trim()).ok_or(DraftError::UnknownKind)?;
+    let links: Vec<&str> = links
+        .iter()
+        .map(|link| link.trim())
+        .filter(|link| !link.is_empty())
+        .collect();
+
+    let summary = normalise_line(summary).ok_or(DraftError::SummaryTooLong)?;
+    if summary.chars().count() > SUMMARY_MAX {
+        return Err(DraftError::SummaryTooLong);
+    }
+
+    // A video entry is a set of links: the form asks for nothing else, and a
+    // title would be invented rather than written.
+    if kind.requires_link() {
+        if links.is_empty() {
+            return Err(DraftError::LinkRequired);
+        }
+        if links.len() > MAX_VIDEOS {
+            return Err(DraftError::TooManyVideos);
+        }
+        let mut videos: Vec<String> = Vec::with_capacity(links.len());
+        for link in &links {
+            let id = youtube_id(link).ok_or(DraftError::LinkInvalid)?;
+            // The same video twice in one post is a slip, not a choice.
+            if !videos.contains(&id) {
+                videos.push(id);
+            }
+        }
+        return Ok(Validated {
+            kind,
+            title: String::new(),
+            summary,
+            body_markdown: String::new(),
+            body_html: String::new(),
+            link: videos
+                .first()
+                .map(|id| format!("https://www.youtube.com/watch?v={id}")),
+            videos,
+            // Stable and readable in a URL, though nothing links to it any more:
+            // the feed is the page now.
+            slug: "video".to_string(),
+        });
+    }
 
     let title = normalise_line(title).ok_or(DraftError::TitleControl)?;
     let title_len = title.chars().count();
     if !(TITLE_MIN..=TITLE_MAX).contains(&title_len) {
         return Err(DraftError::TitleLength);
-    }
-
-    let summary = normalise_line(summary).ok_or(DraftError::SummaryTooLong)?;
-    if summary.chars().count() > SUMMARY_MAX {
-        return Err(DraftError::SummaryTooLong);
     }
 
     let body_markdown = body_markdown.trim().to_string();
@@ -248,43 +301,26 @@ pub fn validate(
         return Err(DraftError::BodyTooLong);
     }
 
-    let link = link.map(str::trim).filter(|value| !value.is_empty());
-    let (link, video_id) = match kind {
-        Kind::Video => {
-            let raw = link.ok_or(DraftError::LinkRequired)?;
-            let id = youtube_id(raw).ok_or(DraftError::LinkInvalid)?;
-            // Stored canonicalised, so the embed and the outbound link always
-            // agree and a redirect-shortened form does not survive.
-            (
-                Some(format!("https://www.youtube.com/watch?v={id}")),
-                Some(id),
-            )
+    // One outbound link is allowed, and only over https.
+    let link = match links.first() {
+        Some(value) => {
+            if !is_https(value) {
+                return Err(DraftError::LinkInvalid);
+            }
+            Some((*value).to_string())
         }
-        _ => {
-            let link = match link {
-                Some(value) => {
-                    if !is_https(value) {
-                        return Err(DraftError::LinkInvalid);
-                    }
-                    Some(value.to_string())
-                }
-                None => None,
-            };
-            (link, None)
-        }
+        None => None,
     };
-
-    let slug = slugify(&title);
 
     Ok(Validated {
         kind,
+        slug: slugify(&title),
         title,
         summary,
         body_html: markdown::to_html(&body_markdown),
         body_markdown,
         link,
-        video_id,
-        slug,
+        videos: Vec::new(),
     })
 }
 
@@ -293,7 +329,7 @@ fn normalise_line(value: &str) -> Option<String> {
     let mut out = String::with_capacity(value.len());
     let mut pending_space = false;
     for ch in value.chars() {
-        // Whitespace first: a title pasted with a line break in it should be
+        // Whitespace first: a title pasted with a line break should be
         // collapsed, not refused. Anything else a terminal can emit is not a
         // title.
         if ch.is_whitespace() {
@@ -317,7 +353,7 @@ fn is_https(value: &str) -> bool {
     lowered.starts_with("https://") && lowered.len() > "https://".len()
 }
 
-/// `https://example.org/a?b` → checked, lowercased host.
+/// `https://example.org/a?b` -> checked, lowercased host.
 fn host_of(url: &str) -> Option<String> {
     let rest = url.split_once("://")?.1;
     let host = rest.split(['/', '?', '#']).next()?;
@@ -361,8 +397,8 @@ pub fn youtube_id(url: &str) -> Option<String> {
     valid.then_some(candidate)
 }
 
-/// A URL-safe fragment of the title. The id in front of it keeps the path stable
-/// when a title is edited later.
+/// A URL-safe fragment of the title. Unused by any page now that the feed shows
+/// entries in full, but stored with each post so a future detail view has one.
 pub fn slugify(title: &str) -> String {
     let mut out = String::with_capacity(title.len());
     let mut last_dash = true; // suppress a leading dash
@@ -406,91 +442,126 @@ mod tests {
             "  Surfside   Atoll opens  ",
             "A new PvP map pool.",
             "**Live now**",
-            None,
+            &[],
         )
         .expect("valid");
         assert_eq!(entry.title, "Surfside Atoll opens");
         assert_eq!(entry.slug, "surfside-atoll-opens");
         assert_eq!(entry.body_html, "<p><strong>Live now</strong></p>");
         assert_eq!(entry.link, None);
-        assert_eq!(entry.video_id, None);
+        assert!(entry.videos.is_empty());
+    }
+
+    #[test]
+    fn every_kind_has_a_phrase_for_the_feed_header() {
+        assert_eq!(Kind::News.phrase(), "news");
+        assert_eq!(Kind::Update.phrase(), "a server update");
+        assert_eq!(Kind::Article.phrase(), "an article");
+        assert_eq!(Kind::Video.phrase(), "a video");
+        // Guides are not a kind here; they will arrive as their own page and be
+        // surfaced in this feed separately.
+        assert_eq!(Kind::parse("guide"), None);
     }
 
     #[test]
     fn titles_are_bounded_and_single_line() {
         assert_eq!(
-            validate("news", "ab", "", "body", None),
+            validate("news", "ab", "", "body", &[]),
             Err(DraftError::TitleLength)
         );
         let long = "x".repeat(TITLE_MAX + 1);
         assert_eq!(
-            validate("news", &long, "", "body", None),
+            validate("news", &long, "", "body", &[]),
             Err(DraftError::TitleLength)
         );
         // A pasted line break is whitespace and collapses.
-        let collapsed = validate("news", "ok\n  title", "", "body", None).expect("valid");
+        let collapsed = validate("news", "ok\n  title", "", "body", &[]).expect("valid");
         assert_eq!(collapsed.title, "ok title");
         // An actual control character is refused rather than stored.
         assert_eq!(
-            validate("news", "bad\u{7}title", "", "body", None),
+            validate("news", "bad\u{7}title", "", "body", &[]),
             Err(DraftError::TitleControl)
         );
         assert_eq!(
-            validate("news", "nul\u{0}byte", "", "body", None),
+            validate("news", "nul\u{0}byte", "", "body", &[]),
             Err(DraftError::TitleControl)
         );
     }
 
     #[test]
-    fn bodies_are_required_except_for_videos() {
+    fn written_entries_need_a_body_and_a_title() {
         assert_eq!(
-            validate("guide", "Some guide", "", "   ", None),
+            validate("article", "Some article", "", "   ", &[]),
             Err(DraftError::BodyRequired)
         );
-        let video = validate(
-            "video",
-            "A run",
-            "",
-            "",
-            Some("https://youtu.be/dQw4w9WgXcQ"),
+        assert_eq!(
+            validate("update", "", "", "body", &[]),
+            Err(DraftError::TitleLength)
         );
-        assert!(video.is_ok(), "a video's body is just a caption");
     }
 
     #[test]
-    fn videos_need_a_youtube_link_and_it_is_canonicalised() {
-        assert_eq!(
-            validate("video", "A run", "", "", None),
-            Err(DraftError::LinkRequired)
-        );
-        assert_eq!(
-            validate("video", "A run", "", "", Some("https://example.org/v")),
-            Err(DraftError::LinkInvalid)
-        );
+    fn a_video_needs_links_and_nothing_else() {
+        // No title, no body: the form does not ask for them, and the feed shows
+        // the author, the kind and the date.
         let entry = validate(
             "video",
-            "A run",
             "",
             "",
-            Some("https://youtu.be/dQw4w9WgXcQ"),
+            "",
+            &["https://youtu.be/dQw4w9WgXcQ".to_string()],
         )
         .expect("valid");
-        assert_eq!(entry.video_id.as_deref(), Some("dQw4w9WgXcQ"));
+        assert!(entry.title.is_empty(), "a title is never invented");
+        assert!(entry.body_html.is_empty());
+        assert_eq!(entry.videos, vec!["dQw4w9WgXcQ".to_string()]);
         assert_eq!(
             entry.link.as_deref(),
             Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
         );
+
+        assert_eq!(
+            validate("video", "", "", "", &[]),
+            Err(DraftError::LinkRequired)
+        );
+        assert_eq!(
+            validate("video", "", "", "", &["https://example.org/v".to_string()]),
+            Err(DraftError::LinkInvalid)
+        );
     }
 
     #[test]
-    fn other_kinds_take_an_optional_https_link_only() {
+    fn one_post_may_hold_several_videos() {
+        let links = [
+            "https://youtu.be/dQw4w9WgXcQ".to_string(),
+            "https://www.youtube.com/watch?v=aaaaaaaaaaa".to_string(),
+            // A repeat is dropped rather than shown twice.
+            "https://youtu.be/dQw4w9WgXcQ".to_string(),
+        ];
+        let entry = validate("video", "", "", "", &links).expect("valid");
+        assert_eq!(
+            entry.videos,
+            vec!["dQw4w9WgXcQ".to_string(), "aaaaaaaaaaa".to_string()]
+        );
+
+        let too_many: Vec<String> = (0..=MAX_VIDEOS)
+            .map(|i| format!("https://youtu.be/video{i:04}"))
+            .collect();
+        assert_eq!(
+            validate("video", "", "", "", &too_many),
+            Err(DraftError::TooManyVideos)
+        );
+    }
+
+    #[test]
+    fn written_kinds_take_at_most_one_https_link() {
         assert_eq!(
             validate(
                 "article",
                 "An article",
                 "",
                 "body",
-                Some("http://plain.example")
+                &["http://plain.example".to_string()]
             ),
             Err(DraftError::LinkInvalid),
             "plain http is not accepted"
@@ -500,10 +571,11 @@ mod tests {
             "An article",
             "",
             "body",
-            Some("https://example.org/a"),
+            &["https://example.org/a".to_string()],
         )
         .expect("valid");
         assert_eq!(entry.link.as_deref(), Some("https://example.org/a"));
+        assert!(entry.videos.is_empty());
     }
 
     #[test]
@@ -549,10 +621,10 @@ mod tests {
     fn summaries_are_optional_but_bounded() {
         let long = "s".repeat(SUMMARY_MAX + 1);
         assert_eq!(
-            validate("news", "A title", &long, "body", None),
+            validate("news", "A title", &long, "body", &[]),
             Err(DraftError::SummaryTooLong)
         );
-        assert!(validate("news", "A title", "", "body", None).is_ok());
+        assert!(validate("news", "A title", "", "body", &[]).is_ok());
     }
 
     #[test]
