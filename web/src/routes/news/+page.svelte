@@ -2,6 +2,7 @@
 	import { morePosts } from '$lib/news/api';
 	import type { NewsPost } from '$lib/news/types';
 	import NewsCard from '$lib/components/news/NewsCard.svelte';
+	import GuideAnnouncement from '$lib/components/news/GuideAnnouncement.svelte';
 	import Seo from '$lib/components/Seo.svelte';
 
 	/**
@@ -134,7 +135,15 @@
 			<li><NewsCard {post} /></li>
 		{/each}
 		{#each posts as post (post.id)}
-			<li><NewsCard {post} moderator={feed.moderator} /></li>
+			<li>
+				{#if post.guide}
+					<!-- An announcement is a pointer at a guide or build: drawn as that
+					     entry's tile, full width, rather than as a news card. -->
+					<GuideAnnouncement guide={post.guide} author={post.author} createdAt={post.created_at} />
+				{:else}
+					<NewsCard {post} moderator={feed.moderator} />
+				{/if}
+			</li>
 		{/each}
 	</ul>
 

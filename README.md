@@ -133,6 +133,7 @@ It needs a built `webapi` and `web/build` first; both jobs above produce them.
 | `WEB_SITE_URL` | `https://commonwealth.ydns.eu` | Absolute base for canonical links and the sitemap |
 | `WEB_DB_SITE` | — | Website-owned read-write DB |
 | `WEB_FILES_DIR` | `files` | Downloads served under `/files/*` |
+| `WEB_IMAGES_DIR` | `site-data/images` | Sanitised build screenshots, one `<hash>.webp` each |
 | `WEB_STATUS_TTL_SECS` | `60` | How long a player count may be reused |
 | `WEB_LIVE_TICK_SECS` | `15` | How often the live feed recomputes |
 | `WEB_STATUS_OVERRIDE` | `<dir of site db>/status-override.txt`, else next to the live DB | Text that replaces the status line while it exists |
@@ -206,6 +207,9 @@ it just quietly loses a feature, so the deploy warns when either is empty.
 | `/api/auth/login` · `/api/auth/logout` · `/api/auth/me` | Sign-in with in-game credentials (see below) |
 | `/api/me/matches` · `/api/me/summary` | The signed-in player's own matches and career totals (401 without a session) |
 | `/files/*` | **Public contract.** Download directory: restored maps and other archives the launcher fetches |
+| `/api/guides` · `/api/guides/{id}` · `/api/guides/options` | The guides section: one endpoint, `category=guide|build`, with tag/class/queue filters, `q` search, and `sort=helpful|newest` |
+| `/api/guides/images` | Build screenshots. The body **is** the image; the reply is a stored, re-encoded derivative |
+| `/images/{hash}.webp` | Those derivatives, content-addressed, `nosniff`, immutable cache |
 | everything else | Not this process: the site belongs to SvelteKit's Node server, and the edge routes here only the paths above |
 
 Unknown paths answer JSON 404 — this process never pretends to be the website.
@@ -253,8 +257,9 @@ not suggest asking a moderator — they cannot change it.
 **Each kind asks for only what it needs.** `news`, `update` and `article` take a
 title, a summary and a Markdown body. `video` takes YouTube links and nothing
 else — no invented title, no empty body — up to six per post, laid out two to a
-row on a wide screen. `guide` is not a kind: guides get their own page later and
-will appear in this feed as "posted a guide".
+row on a wide screen. `guide` is not a news kind: guides and builds have their
+own section (`/guides`, `/builds`), and approving one writes an announcement into
+this feed — drawn as the entry's tile, full width.
 
 **Roles** are `ga_user_roles` rows, the same table that gates `spectator`, and
 this service only ever **reads** them. They are granted in the dashboard, which

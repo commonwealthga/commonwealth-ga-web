@@ -128,6 +128,55 @@ reload whenever you crossed the seam. `scripts/smoke-ssr.sh` exists so the
 property that design was protecting cannot quietly break again: it seeds an entry
 and greps the server's HTML for it.
 
+## Guides and builds
+
+One section, two categories, one moderation queue — sharing authorship, review
+and the tiled list, differing in what they are made of. A **guide** is writing
+with 1..n tags from a closed set (`basics`, `strategy`, `class`, `mode`, `pve`,
+`pvp`). A **build** is a skill tree screenshot with the one class it is spent on,
+the queues it is for (`pvp`, `pve`, either or both), an optional description and
+an optional Discord thread link — builds already live in Discord, and the link
+keeps the discussion there. Which fields are required is decided in one
+`guides::validate`, so the API, the form and the tests cannot hold different
+opinions.
+
+Approving an entry writes a **news post** that points at it: `kind = news`, the
+entry's author, `guide_id` set, and its own copy of the title, class and image so
+the feed never joins across to the guides tables. The feed draws those full width
+as the entry's own tile. Rejecting or unpublishing deletes the announcement —
+a post pointing at a page nobody can open is worse than no post.
+
+Search is `LIKE` over title, summary and body with the wildcards escaped;
+ordering is "most helpful" (thumbs, then newest) or newest. Likes are one row per
+account per entry.
+
+### Screenshots are never stored as uploaded
+
+Players may not upload arbitrary files, and the pipeline is how that is kept
+true rather than promised. Nothing a player sends is ever written to disk or
+served:
+
+```
+sniff the format from the bytes (not the header, not the file name)
+→ PNG, JPEG or WebP only — SVG is a document that can carry script, not an image
+→ cap 4000×4000 and total allocation *before* decoding (a header claiming
+  60000×60000 fails here, not in the OOM killer)
+→ decode with a pure-Rust decoder, off the async workers
+→ downscale to 1600 px (twice a tile, so it stays crisp on a retina screen)
+→ re-encode to WebP → store content-addressed as site-data/images/<sha256>.webp
+```
+
+Re-encoding is the sanitiser: EXIF, XMP, ICC, text chunks and anything appended
+after the image's end marker die with the original bytes. Two tests hold this
+down — a PNG with a PHP payload glued after its end marker, and an SVG file —
+and `/images/<name>` serves nothing that is not `<hash>.webp`.
+
+The form accepts a file, a drag and drop, or a clipboard paste, and uploads
+immediately so the preview *is* the derivative: what an author sees before
+submitting is exactly what will be stored, and a file that cannot be sanitised
+fails before the form is filled in. A submission may only reference an image its
+own author uploaded.
+
 ## Data model worth knowing
 
 `server.db` is far richer than the old site exposed:

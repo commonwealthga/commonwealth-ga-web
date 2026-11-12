@@ -40,6 +40,15 @@ wait_for() { # url, what
 	return 1
 }
 
+# Fail loudly if something is already on our ports: the script would otherwise
+# test whatever that process is serving and report on the wrong stack.
+for port in "$API_PORT" "$SITE_PORT"; do
+	if (command -v ss >/dev/null && ss -ltn 2>/dev/null | grep -q "[:.]$port\b"); then
+		echo "FAIL port $port is already in use — stop it, or pick another (API_PORT=, SITE_PORT=)" >&2
+		exit 1
+	fi
+done
+
 echo "== api"
 WEB_BIND="127.0.0.1:$API_PORT" \
 	WEB_DB_SITE="$work/site.db" \
@@ -97,5 +106,15 @@ fi
 curl -fsS -m 5 "http://127.0.0.1:$API_PORT/sitemap.xml" | grep -q "<urlset" \
 	|| { echo "FAIL the sitemap did not render" >&2; exit 1; }
 echo "ok   the sitemap renders"
+
+# The guides section is server-rendered too: an empty database still has to
+# produce its page, and the section's entry in the nav has to point somewhere.
+guides="$work/guides.html"
+curl -fsS -m 15 "http://127.0.0.1:$SITE_PORT/guides" >"$guides"
+for needle in "Guides" "Nothing here yet" "/builds"; do
+	grep -qF "$needle" "$guides" \
+		|| { echo "FAIL /guides is missing: $needle" >&2; exit 1; }
+done
+echo "ok   /guides renders on the server"
 
 echo "all checks passed"

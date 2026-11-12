@@ -111,6 +111,20 @@ pub struct PostView {
     pub can_edit: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub moderation_note: Option<String>,
+    /// Present on the automatic announcement of a guide or build: the feed draws
+    /// those as the entry's own tile, full width, linking at its page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub guide: Option<GuidePointer>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GuidePointer {
+    pub id: i64,
+    pub category: &'static str,
+    pub title: String,
+    pub path: String,
+    pub class_label: Option<&'static str>,
+    pub image_url: Option<String>,
 }
 
 impl PostView {
@@ -157,6 +171,14 @@ impl PostView {
             status: post.status.as_str(),
             can_edit: false,
             moderation_note: post.moderation_note.clone(),
+            guide: post.guide.as_ref().map(|guide| GuidePointer {
+                id: guide.id,
+                category: guide.category,
+                title: guide.title.clone(),
+                path: guide.path.clone(),
+                class_label: guide.class_label,
+                image_url: guide.image_url.clone(),
+            }),
         }
     }
 }

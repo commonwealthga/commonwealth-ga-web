@@ -183,11 +183,6 @@ pub async fn migrate(pool: &SqlitePool) -> sqlx::Result<()> {
     // One announcement per guide in the news feed, at most. Created on approval
     // and removed on rejection or unpublishing, so the feed cannot point at a
     // page that is not there.
-    sqlx::query("ALTER TABLE news_posts ADD COLUMN guide_id INTEGER")
-        .execute(pool)
-        .await
-        .ok();
-
     Ok(())
 }
 

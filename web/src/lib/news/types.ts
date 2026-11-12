@@ -1,5 +1,15 @@
 /** Shapes the news API returns, in one place so the pages and components agree. */
 
+/** Set on the automatic announcement of a published guide or build. */
+export interface GuidePointer {
+	id: number;
+	category: 'guide' | 'build';
+	title: string;
+	path: string;
+	class_label: string | null;
+	image_url: string | null;
+}
+
 export interface NewsPost {
 	id: number;
 	kind: 'news' | 'update' | 'article' | 'video';
@@ -20,6 +30,8 @@ export interface NewsPost {
 	/** Only its author, only while pending — decided by the API. */
 	can_edit: boolean;
 	moderation_note?: string | null;
+	/** Present on the automatic announcement of a published guide or build. */
+	guide?: GuidePointer;
 }
 
 export interface Allowance {

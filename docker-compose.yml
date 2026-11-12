@@ -35,6 +35,8 @@ services:
       WEB_DB_EXPORT_TOKEN: "${WEB_DB_EXPORT_TOKEN:-}"
       WEB_DB_SITE: "/site-data/site.db"
       WEB_FILES_DIR: "/srv/files"
+      # Sanitised build screenshots: website-owned, on the writable volume.
+      WEB_IMAGES_DIR: "/site-data/images"
       # Player settings: empty by default, which leaves the settings page
       # readable but not writable. Production fills this from the override.
       WEB_CONTROL_API_URL: "${WEB_CONTROL_API_URL:-}"

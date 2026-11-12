@@ -34,6 +34,11 @@ impl Harness {
             .expect("site db");
         auth::migrate(&site).await.expect("sessions table");
         store::migrate(&site).await.expect("guides tables");
+        // Approving an entry announces it in the news feed, so the news tables
+        // are part of what this section needs — exactly as at startup.
+        webapi::news::store::migrate(&site)
+            .await
+            .expect("news tables");
         Self {
             site,
             live_path: dir.path().join("server.db"),
@@ -680,6 +685,135 @@ async fn the_options_endpoint_describes_the_vocabulary() {
     // with the endpoint that enforces them.
     assert_eq!(value["posting"]["signed_in"].as_bool(), Some(false));
     assert_eq!(value["posting"]["may_post"].as_bool(), Some(false));
+}
+
+#[tokio::test]
+async fn approving_announces_the_entry_in_the_feed_and_unpublishing_withdraws_it() {
+    let harness = Harness::new().await;
+    let moderator = harness.session(20, "mod").await;
+    let app = harness.router(Some(
+        harness.live_with_roles(&[(20, "news_moderator")]).await,
+    ));
+    let author = harness.session(21, "announcer").await;
+
+    let (_, body) = send(
+        &app,
+        json_request(
+            "POST",
+            "/api/guides",
+            Some(&author),
+            guide_body("Lane control", &["strategy"]),
+        ),
+    )
+    .await;
+    let id = id_of(&body);
+
+    // Nothing in the feed before approval.
+    let (_, before) = send(&app, get(None, "/api/news")).await;
+    assert!(!before.contains("Lane control"), "{before}");
+
+    send(
+        &app,
+        json_request(
+            "POST",
+            &format!("/api/guides/{id}/approve"),
+            Some(&moderator),
+            serde_json::json!({}),
+        ),
+    )
+    .await;
+
+    // The announcement is a feed post that points at the entry's page.
+    let (_, after) = send(&app, get(None, "/api/news")).await;
+    assert!(after.contains("has posted a guide"), "{after}");
+    assert!(after.contains("Lane control"), "{after}");
+    // The announcement links at the entry's page, not at the post.
+    assert!(
+        after.contains(&format!("/guides/{id}-lane-control")),
+        "{after}"
+    );
+    assert!(after.contains(r#""guide":{"#), "{after}");
+
+    // Unpublishing it takes the announcement with it.
+    send(
+        &app,
+        json_request(
+            "POST",
+            &format!("/api/guides/{id}/unapprove"),
+            Some(&moderator),
+            serde_json::json!({ "note": "Needs a screenshot of the lane." }),
+        ),
+    )
+    .await;
+    let (_, withdrawn) = send(&app, get(None, "/api/news")).await;
+    assert!(!withdrawn.contains("Lane control"), "{withdrawn}");
+
+    // And re-approving announces it exactly once, not twice: the title appears
+    // in the post and again in the pointer the card is drawn from, so count the
+    // pointers.
+    send(
+        &app,
+        json_request(
+            "POST",
+            &format!("/api/guides/{id}/approve"),
+            Some(&moderator),
+            serde_json::json!({}),
+        ),
+    )
+    .await;
+    let (_, again) = send(&app, get(None, "/api/news")).await;
+    assert_eq!(again.matches(r#""guide":{"#).count(), 1, "{again}");
+}
+
+#[tokio::test]
+async fn published_entries_reach_the_sitemap() {
+    let harness = Harness::new().await;
+    let moderator = harness.session(30, "mod").await;
+    let app = harness.router(Some(
+        harness.live_with_roles(&[(30, "news_moderator")]).await,
+    ));
+    let author = harness.session(31, "author").await;
+
+    let (_, body) = send(
+        &app,
+        json_request(
+            "POST",
+            "/api/guides",
+            Some(&author),
+            guide_body("Sitemap me", &["basics"]),
+        ),
+    )
+    .await;
+    let id = id_of(&body);
+
+    // A pending entry is not a page yet, so it is not advertised.
+    let (_, before) = send(&app, get(None, "/sitemap.xml")).await;
+    assert!(!before.contains("sitemap-me"), "{before}");
+
+    send(
+        &app,
+        json_request(
+            "POST",
+            &format!("/api/guides/{id}/approve"),
+            Some(&moderator),
+            serde_json::json!({}),
+        ),
+    )
+    .await;
+
+    let (_, after) = send(&app, get(None, "/sitemap.xml")).await;
+    assert!(
+        after.contains(&format!("/guides/{id}-sitemap-me")),
+        "{after}"
+    );
+    // The section's own pages are listed once, not once per entry.
+    assert_eq!(
+        after
+            .matches("<loc>https://example.test/guides</loc>")
+            .count(),
+        1,
+        "{after}"
+    );
 }
 
 fn id_of(body: &str) -> i64 {

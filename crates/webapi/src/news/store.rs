@@ -108,6 +108,21 @@ pub async fn migrate(pool: &SqlitePool) -> sqlx::Result<()> {
     .execute(pool)
     .await?;
 
+    // A post may be the automatic announcement of a published guide or build.
+    // It carries its own copy of what the tile shows — title, category, class,
+    // image — so the feed never joins across to the guides tables, and an
+    // announcement cannot dangle if that row is deleted. `ALTER` because these
+    // arrived after the first deployments; `ok()` because it errors when the
+    // column is already there.
+    for column in [
+        "ALTER TABLE news_posts ADD COLUMN guide_id INTEGER",
+        "ALTER TABLE news_posts ADD COLUMN announce_category TEXT",
+        "ALTER TABLE news_posts ADD COLUMN announce_class TEXT",
+        "ALTER TABLE news_posts ADD COLUMN image_url TEXT",
+    ] {
+        sqlx::query(column).execute(pool).await.ok();
+    }
+
     Ok(())
 }
 
@@ -132,6 +147,21 @@ pub struct Post {
     pub reviewed_at: Option<i64>,
     pub moderation_note: Option<String>,
     pub thumbs_up: i64,
+    /// Set on the automatic announcement of a guide or build. The feed renders
+    /// those as the entry's own tile, full width, rather than as a news card.
+    pub guide: Option<GuideRef>,
+}
+
+/// The published entry an announcement points at, in the few fields the feed
+/// needs to draw it.
+#[derive(Debug, Clone)]
+pub struct GuideRef {
+    pub id: i64,
+    pub category: &'static str,
+    pub title: String,
+    pub path: String,
+    pub class_label: Option<&'static str>,
+    pub image_url: Option<String>,
 }
 
 /// The canonical path of a post. The id makes it stable if the title is edited.
@@ -150,7 +180,8 @@ const SELECT: &str = "SELECT p.id, p.kind, p.title, p.slug, p.summary, p.body_ma
                              p.author_name, p.created_at, p.reviewed_by_name,
                              p.reviewed_at, p.moderation_note,
                              (SELECT COUNT(*) FROM news_reactions r WHERE r.post_id = p.id)
-                                AS thumbs_up
+                                AS thumbs_up,
+                             p.guide_id, p.announce_category, p.announce_class, p.image_url
                       FROM news_posts p";
 
 /// The post's videos, falling back to the legacy single `video_id` column for
@@ -193,7 +224,27 @@ fn row_to_post(row: &sqlx::sqlite::SqliteRow) -> Post {
         reviewed_at: row.get("reviewed_at"),
         moderation_note: row.get("moderation_note"),
         thumbs_up: row.get("thumbs_up"),
+        guide: guide_ref(row),
     }
+}
+
+fn guide_ref(row: &sqlx::sqlite::SqliteRow) -> Option<GuideRef> {
+    let id: Option<i64> = row.get("guide_id");
+    let id = id?;
+    let class = row
+        .get::<Option<String>, _>("announce_class")
+        .and_then(|value| crate::guides::Class::parse(&value));
+    Some(GuideRef {
+        id,
+        category: match row.get::<Option<String>, _>("announce_category").as_deref() {
+            Some("build") => "build",
+            _ => "guide",
+        },
+        title: row.get("title"),
+        path: row.get::<Option<String>, _>("link").unwrap_or_default(),
+        class_label: class.map(|class| class.label()),
+        image_url: row.get("image_url"),
+    })
 }
 
 /// Store a submission as pending. Returns the new id.
@@ -242,6 +293,71 @@ pub async fn attach_videos(pool: &SqlitePool, post_id: i64, videos: &[String]) -
         .execute(pool)
         .await?;
     }
+    Ok(())
+}
+
+/// Announce a published guide or build in the feed.
+///
+/// The post is a pointer, not content: it carries the entry's title and a link to
+/// its page, is written by the entry's author, and is already approved (the entry
+/// has been). `guide_id` is what marks it — the feed renders those full width and
+/// nothing may edit them.
+///
+/// One announcement per entry: `INSERT ... WHERE NOT EXISTS` rather than an upsert,
+/// because re-approving something that was unpublished should not stack a second
+/// copy of it in the feed.
+#[allow(clippy::too_many_arguments)]
+pub async fn announce_guide(
+    pool: &SqlitePool,
+    guide_id: i64,
+    author_id: i64,
+    author_name: &str,
+    title: &str,
+    path: &str,
+    summary: &str,
+    category: &str,
+    class: Option<&str>,
+    image_url: Option<&str>,
+    now: i64,
+) -> sqlx::Result<Option<i64>> {
+    let existing: Option<i64> = sqlx::query_scalar("SELECT id FROM news_posts WHERE guide_id = ?")
+        .bind(guide_id)
+        .fetch_optional(pool)
+        .await?;
+    if existing.is_some() {
+        return Ok(None);
+    }
+
+    let result = sqlx::query(
+        "INSERT INTO news_posts (kind, title, slug, summary, body_markdown, body_html,
+                                 link, status, author_id, author_name, created_at,
+                                 guide_id, announce_category, announce_class, image_url)
+         VALUES ('news', ?, ?, ?, '', '', ?, 'approved', ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(title)
+    .bind(crate::news::slugify(title))
+    .bind(summary)
+    .bind(path)
+    .bind(author_id)
+    .bind(author_name)
+    .bind(now)
+    .bind(guide_id)
+    .bind(category)
+    .bind(class)
+    .bind(image_url)
+    .execute(pool)
+    .await?;
+
+    Ok(Some(result.last_insert_rowid()))
+}
+
+/// Withdraw an entry's announcement — its guide was rejected or unpublished, and
+/// a feed post pointing at a page nobody can open is worse than no post.
+pub async fn retract_guide(pool: &SqlitePool, guide_id: i64) -> sqlx::Result<()> {
+    sqlx::query("DELETE FROM news_posts WHERE guide_id = ?")
+        .bind(guide_id)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 

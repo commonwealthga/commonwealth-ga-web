@@ -78,7 +78,25 @@ pub async fn posting_rules(
 /// No post URLs: every post lives on `/news`, and one URL per post would be a
 /// sitemap of anchors.
 pub async fn sitemap_xml(State(state): State<Arc<AppState>>) -> ApiResult<Response> {
-    let xml = sitemap::render(&state.cfg.site_url);
+    // A missing site database means no entry pages, not no sitemap: the static
+    // pages are still true.
+    // Owned paths, because the sitemap outlives the rows they came from.
+    let published = match state.site_pool.as_ref() {
+        Some(site) => crate::guides::store::all_approved(site)
+            .await
+            .map_err(|error| AppError::Internal(anyhow::Error::new(error)))?,
+        None => Vec::new(),
+    };
+    let paths: Vec<String> = published.iter().map(|entry| entry.path()).collect();
+    let entries: Vec<sitemap::EntryRef<'_>> = paths
+        .iter()
+        .zip(published.iter())
+        .map(|(path, entry)| sitemap::EntryRef {
+            path,
+            updated: entry.created_at,
+        })
+        .collect();
+    let xml = sitemap::render(&state.cfg.site_url, &entries);
     Ok((
         [
             (header::CONTENT_TYPE, "application/xml; charset=utf-8"),
