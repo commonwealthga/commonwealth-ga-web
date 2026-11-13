@@ -4,8 +4,15 @@
 	import Panel from '$lib/components/Panel.svelte';
 	import Seo from '$lib/components/Seo.svelte';
 	import StatusReadout from '$lib/components/StatusReadout.svelte';
+	import { untrack } from 'svelte';
+	import { SITE_ORIGIN } from '$lib/site';
 	import { subscribeStatus } from '$lib/live';
-	import { formatCountdown, formatInViewerTime, headlineEvent } from '$lib/events';
+	import {
+		eventUrgency,
+		formatCountdown,
+		formatInViewerTime,
+		headlineEvent
+	} from '$lib/events';
 
 	/**
 	 * schema.org description of the game itself, for the home page only: what it
@@ -22,7 +29,7 @@
 		description:
 			'Community-run Global Agenda server with an active playerbase: the 2010 team shooter Hi-Rez shut down in 2018, running again with everything unlocked.',
 		url: 'https://commonwealth.ydns.eu/',
-		image: 'https://commonwealth.ydns.eu/og.jpg',
+		image: `${SITE_ORIGIN}/og/home.jpg`,
 		publisher: {
 			'@type': 'Organization',
 			name: 'The Commonwealth',
@@ -108,9 +115,15 @@
 		{ k: 'Server', v: 'London' }
 	];
 
+	let { data } = $props();
+
+	// Seeded with the server's reading, so the number is in the HTML; the live
+	// stream replaces it a moment later without the page shifting. Read once on
+	// purpose — after that the count belongs to the stream, not to the load.
+	let players = $state(untrack(() => data.count.players ?? 0));
+
 	// Event status is client-only: the prerendered HTML must not freeze a clock.
 	let now = $state<Date | null>(null);
-	let players = $state(0);
 	$effect(() => {
 		const tick = () => (now = new Date());
 		tick();
@@ -120,6 +133,8 @@
 	$effect(() => subscribeStatus((status) => (players = status.ok ? (status.players ?? 0) : 0)));
 
 	let headline = $derived(now ? headlineEvent(now, players) : null);
+	/** Whether the headline event is close enough to be the loud thing in its panel. */
+	let headlineUrgency = $derived(headline && now ? eventUrgency(headline, now) : 'later');
 </script>
 
 <svelte:head>
@@ -151,6 +166,13 @@
 			playerbase. You start at level 50 with everything
 			unlocked, and the game picks up at the endgame.
 		</p>
+
+		<!--
+			The count is in the copy, not only in the panel below: it is the single
+			most convincing fact on this page, and a crawler (or an assistant quoting
+			the site) only ever sees what the server renders.
+		-->
+		<p class="label text-ember">{data.sentence}</p>
 
 		<div class="flex flex-wrap items-center gap-3">
 			<Button href="/play" size="lg">Get started</Button>
@@ -210,17 +232,27 @@
 			{#if headline}
 				<div>
 					<p class="text-sm text-ink">{headline.event.title}</p>
-					<p class="label mt-2 {headline.state === 'live' ? 'text-ember' : 'text-faint'}">
-						{#if headline.state === 'live'}
-							live now
-						{:else if headline.state === 'just-ended'}
-							finished for today
-						{:else}
+
+					{#if headline.state === 'live'}
+						<p class="heading mt-2 text-2xl tracking-[0.04em] text-ember">live now</p>
+					{:else if headlineUrgency === 'soon'}
+						<!--
+							Close enough that the countdown is the point: set it as a number
+							rather than a footnote, so it reads across the room.
+						-->
+						<p class="heading mt-2 text-3xl tracking-[0.03em] text-ember tabular-nums">
+							in {formatCountdown(headline.nextAt, now ?? new Date())}
+						</p>
+						<p class="label mt-1 text-dim">{formatInViewerTime(headline.nextAt)} your time</p>
+					{:else if headline.state === 'just-ended'}
+						<p class="label mt-2 text-faint">finished for today</p>
+					{:else}
+						<p class="label mt-2 text-faint">
 							in {formatCountdown(headline.nextAt, now ?? new Date())} · {formatInViewerTime(
 								headline.nextAt
 							)}
-						{/if}
-					</p>
+						</p>
+					{/if}
 				</div>
 			{:else}
 				<p class="text-sm text-dim">Friday raids · Saturday challenges · Sunday mercenary</p>

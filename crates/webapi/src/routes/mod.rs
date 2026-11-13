@@ -49,6 +49,7 @@ pub fn api() -> Router<Arc<AppState>> {
     Router::new()
         // Frozen contract: plain text player count, polled by the Discord bot.
         .route("/status", get(status::status))
+        .route("/players", get(status::players))
         // Liveness for the deploy health check and the container runtime.
         .route("/health", get(status::health))
         // Server-sent events: one-way live feed for the frontend.

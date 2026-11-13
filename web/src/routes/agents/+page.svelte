@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Seo from '$lib/components/Seo.svelte';
+	import { untrack } from 'svelte';
 	/**
 	 * The agent directory.
 	 *
@@ -13,24 +14,37 @@
 	import { relativeLabel } from '$lib/format';
 	import { reveal } from '$lib/reveal';
 
-	let query = $state(readText('q'));
-	let page = $state(readPage() - 1);
+	let { data } = $props();
+
+	// Seeded from the server so the list is in the HTML; from here the reader owns
+	// it, and every change goes back through the URL.
+	const initial = untrack(() => data.directory);
+	let query = $state(initial?.query ?? readText('q'));
+	let page = $state((initial?.page ?? readPage()) - 1);
 
 	trackScroll();
 	afterNavigate(() => {
 		query = readText('q');
 		page = readPage() - 1;
 	});
-	let agents = $state<AgentRow[]>([]);
-	let total = $state(0);
-	let hasMore = $state(false);
-	let phase = $state<'loading' | 'ready' | 'error'>('loading');
+	let agents = $state<AgentRow[]>(initial?.agents ?? []);
+	let total = $state(initial?.total ?? 0);
+	let hasMore = $state(initial?.has_more ?? false);
+	let phase = $state<'loading' | 'ready' | 'error'>(initial ? 'ready' : 'loading');
 	let problem = $state('');
+
+	// The first render already has its rows; refetching them would only flicker.
+	let settled = $state(Boolean(initial));
 
 	$effect(() => {
 		const requestedQuery = query;
 		const requestedPage = page;
 		let cancelled = false;
+
+		if (untrack(() => settled)) {
+			settled = false;
+			return;
+		}
 
 		// Debounce keystrokes so typing a name is one query, not ten.
 		const timer = setTimeout(() => {

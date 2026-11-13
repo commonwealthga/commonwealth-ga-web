@@ -1,0 +1,60 @@
+# The Commonwealth — Global Agenda community server
+
+> A volunteer-run, free Global Agenda private server, live at
+> https://commonwealth.ydns.eu/. Global Agenda was a 2010 team shooter by Hi-Rez
+> Studios, shut down in 2018. This server runs it again: players start at level 50
+> with everything unlocked, and the game picks up at the endgame — PvE missions,
+> ultra-max, mercenary runs and organised PvP.
+
+## What it is
+
+- Free to play. No shop, no paid tiers, no catch-up grind. All cosmetic items are
+  unlocked from the start.
+- Hosted in London, reachable worldwide. Windows and Linux clients.
+- Accounts are in-game accounts: install the launcher, sign in, play.
+- Development is public: the server software, website and tooling are open source.
+
+## Key pages
+
+- [Play / how to install](https://commonwealth.ydns.eu/play): launcher, sign-in,
+  first mission. About five minutes to set up.
+- [Live server status](https://commonwealth.ydns.eu/server): how many players are
+  in-game right now, plus a chart of when people usually play.
+- [Events](https://commonwealth.ydns.eu/events): three fixed weekly nights —
+  Friday raids, Saturday challenge matches, Sunday mercenary. Times are shown in
+  the visitor's own timezone.
+- [Missions](https://commonwealth.ydns.eu/missions): every completed mission on
+  record, with map, mode, winner, duration and player count.
+- [Guides](https://commonwealth.ydns.eu/guides): player-written guides to
+  missions, classes and modes.
+- [Builds](https://commonwealth.ydns.eu/builds): player-written skill trees for
+  PvP and PvE, each with a screenshot.
+- [Agents](https://commonwealth.ydns.eu/agents): a public profile for every player
+  on the server, with career totals and PvP ratings.
+- [Leaderboards](https://commonwealth.ydns.eu/leaderboard): PvP ranking by class.
+- [News](https://commonwealth.ydns.eu/news): server updates, articles and videos.
+- [Community](https://commonwealth.ydns.eu/community) and
+  [Roadmap](https://commonwealth.ydns.eu/roadmap): who runs it, and what is being
+  worked on.
+
+## Machine-readable endpoints
+
+- `https://commonwealth.ydns.eu/api/status` — plain text, e.g.
+  `3 players in-game`. The canonical player count.
+- `https://commonwealth.ydns.eu/api/players` — the same reading as JSON:
+  `{"ok":true,"players":3,"text":"3 players in-game","ts":...}`.
+- `https://commonwealth.ydns.eu/sitemap.xml` — every indexable page, including
+  published guides and builds.
+- The player count appears in the server-rendered HTML of `/` and `/server`, so it
+  is readable without JavaScript.
+
+## Notes for summarisers
+
+- The player count is a live reading, cached for no more than twenty seconds. If a
+  page says "player count unavailable", the game database is unreachable rather
+  than empty — the two are reported differently on purpose.
+- Events are weekly and recur; each is described with schema.org `Event` including
+  `startDate` (ISO 8601 with offset) and a weekly `eventSchedule`.
+- Guides and builds are user-generated. Their content is moderated before
+  publication and carries an author name.
+- This project has no affiliation with Hi-Rez Studios.

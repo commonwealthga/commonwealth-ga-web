@@ -166,6 +166,52 @@ async fn status_is_plain_text_with_the_discord_bot_wording() {
     assert_eq!(body, "2 players in-game");
 }
 
+/// The site renders the count into its HTML so that a crawler — or a reader whose
+/// JavaScript did not run — sees a number rather than "linking to grid". It gets
+/// it from here, and the fields match the SSE payload the browser later receives.
+#[tokio::test]
+async fn players_json_mirrors_the_text_endpoint() {
+    let harness = Harness::new();
+    let (app, _) = harness.app_with_live_db().await;
+
+    let (status, content_type, body) = get(&app, "/api/players").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        content_type.starts_with("application/json"),
+        "got {content_type}"
+    );
+
+    let value: serde_json::Value = serde_json::from_str(&body).expect("json");
+    assert_eq!(value["ok"], serde_json::Value::Bool(true));
+    assert_eq!(value["players"], serde_json::Value::Number(2.into()));
+    assert_eq!(
+        value["text"],
+        serde_json::Value::String("2 players in-game".into())
+    );
+    assert!(
+        value["ts"].as_i64().unwrap_or(0) > 0,
+        "a timestamp is required"
+    );
+}
+
+#[tokio::test]
+async fn players_json_degrades_rather_than_inventing_a_zero() {
+    let harness = Harness::new();
+    // No live database at all: the honest answer is "unavailable", not "0 players".
+    let app = app(AppState::new(harness.config(None), None, None, None));
+
+    let (status, _, body) = get(&app, "/api/players").await;
+    assert_eq!(status, StatusCode::OK);
+
+    let value: serde_json::Value = serde_json::from_str(&body).expect("json");
+    assert_eq!(value["ok"], serde_json::Value::Bool(false));
+    assert!(value["players"].is_null(), "{body}");
+    assert_eq!(
+        value["text"],
+        serde_json::Value::String("server status unavailable".into())
+    );
+}
+
 #[tokio::test]
 async fn status_uses_the_singular_for_one_player() {
     let harness = Harness::new();

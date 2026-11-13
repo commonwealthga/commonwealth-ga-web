@@ -196,7 +196,9 @@ export function eventStatus(
 
 /** All events with their status, soonest-relevant first. */
 export function allStatuses(now: Date, playersOnline: number): EventStatus[] {
-	const order: Record<EventState, number> = { live: 0, 'just-ended': 1, upcoming: 2 };
+	// Nearest first: what is running, then what starts soonest, then what has
+	// finished. A finished event is the least useful thing to lead with.
+	const order: Record<EventState, number> = { live: 0, upcoming: 1, 'just-ended': 2 };
 	return EVENTS.map((event) => eventStatus(event, now, playersOnline)).sort((a, b) => {
 		if (order[a.state] !== order[b.state]) return order[a.state] - order[b.state];
 		if (a.state === 'upcoming') return a.nextAt.getTime() - b.nextAt.getTime();
@@ -217,6 +219,107 @@ export function headlineEvent(now: Date, playersOnline: number): EventStatus {
  */
 export function formatInViewerTime(date: Date): string {
 	return formatDateTime(date);
+}
+
+/**
+ * How close an event has to be before the page stops treating it as "some time
+ * this week" and starts telling people to get in game.
+ *
+ * Twelve hours is roughly one waking day: close enough that it is worth
+ * interrupting someone for, far enough that a player reading in the morning still
+ * has the evening ahead of them.
+ */
+export const SOON_WINDOW_MS = 12 * 60 * 60 * 1000;
+
+/** What the page should do with a status: shout, count, or stay quiet. */
+export type Urgency = 'live' | 'soon' | 'later' | 'past';
+
+export function eventUrgency(status: EventStatus, now: Date): Urgency {
+	if (status.state === 'live') return 'live';
+	if (status.state === 'just-ended') return 'past';
+	return status.nextAt.getTime() - now.getTime() <= SOON_WINDOW_MS ? 'soon' : 'later';
+}
+
+/**
+ * The instant as ISO 8601 *with the schedule's own offset*, e.g.
+ * `2026-11-13T18:00:00+01:00`.
+ *
+ * This is the one form of an event's time that does not depend on who is reading
+ * it: a crawler, a calendar client and a `<time datetime>` all get the same
+ * unambiguous instant, while the visible text stays in the viewer's clock.
+ */
+export function isoInEventZone(date: Date): string {
+	const parts = zoneParts(date, EVENT_TIMEZONE);
+	const offsetMinutes = zoneOffsetMs(date, EVENT_TIMEZONE) / 60000;
+	const sign = offsetMinutes < 0 ? '-' : '+';
+	const absolute = Math.abs(offsetMinutes);
+	const pad = (value: number) => String(value).padStart(2, '0');
+
+	return (
+		`${parts.year}-${pad(parts.month)}-${pad(parts.day)}` +
+		`T${pad(parts.hour)}:${pad(parts.minute)}:00` +
+		`${sign}${pad(Math.floor(absolute / 60))}:${pad(absolute % 60)}`
+	);
+}
+
+/** "CET" / "CEST" — the schedule's zone, for text that has not been localised yet. */
+export function eventZoneName(date: Date): string {
+	const parts = new Intl.DateTimeFormat('en-GB', {
+		timeZone: EVENT_TIMEZONE,
+		timeZoneName: 'short'
+	}).formatToParts(date);
+	return parts.find((part) => part.type === 'timeZoneName')?.value ?? 'CET';
+}
+
+/** schema.org's day URIs, indexed like `Date#getDay`. */
+const SCHEMA_DAYS = [
+	'https://schema.org/Sunday',
+	'https://schema.org/Monday',
+	'https://schema.org/Tuesday',
+	'https://schema.org/Wednesday',
+	'https://schema.org/Thursday',
+	'https://schema.org/Friday',
+	'https://schema.org/Saturday'
+];
+
+/**
+ * An `Event` node for one occurrence, for the page's JSON-LD.
+ *
+ * Weekly rather than a single date, because that is what these are: `eventSchedule`
+ * says so, and `startDate` gives the next one so the node is never stale by more
+ * than a week without anyone editing it.
+ */
+export function eventSchema(status: EventStatus, siteOrigin: string) {
+	const start = status.state === 'upcoming' ? status.nextAt : status.at;
+	const parts = zoneParts(start, EVENT_TIMEZONE);
+
+	return {
+		'@type': 'Event',
+		name: status.event.title,
+		description: status.event.detail,
+		startDate: isoInEventZone(start),
+		eventSchedule: {
+			'@type': 'Schedule',
+			byDay: SCHEMA_DAYS[status.event.weekday],
+			startTime: `${String(parts.hour).padStart(2, '0')}:${String(parts.minute).padStart(2, '0')}:00`,
+			repeatFrequency: 'P1W'
+		},
+		eventAttendanceMode: 'https://schema.org/OnlineEventAttendanceMode',
+		eventStatus: 'https://schema.org/EventScheduled',
+		location: {
+			'@type': 'VirtualLocation',
+			url: `${siteOrigin}/play`
+		},
+		organizer: {
+			'@type': 'Organization',
+			name: 'The Commonwealth',
+			url: `${siteOrigin}/`
+		},
+		isAccessibleForFree: true,
+		// Rich results want an image; the events card is accurate for all three.
+		image: `${siteOrigin}/og/events.jpg`,
+		url: `${siteOrigin}/events#${status.event.id}`
+	};
 }
 
 /** "2d 4h" / "45m" / "now". */

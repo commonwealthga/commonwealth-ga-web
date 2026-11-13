@@ -3,9 +3,34 @@
 	import { countUp } from '$lib/countup';
 	import { subscribeStatus, type StatusPayload } from '$lib/live';
 
-	let { class: className = '', size = 'lg' }: { class?: string; size?: 'lg' | 'xl' } = $props();
+	let {
+		class: className = '',
+		size = 'lg',
+		initial = null
+	}: {
+		class?: string;
+		size?: 'lg' | 'xl';
+		/**
+		 * The server's reading, when the page was rendered with one. Without it the
+		 * first paint is the "connecting" state — which is what a crawler saw of the
+		 * one number worth quoting.
+		 */
+		initial?: { players: number | null } | null;
+	} = $props();
 
-	let status = $state<StatusPayload | null>(null);
+	let status = $state<StatusPayload | null>(
+		untrack(() =>
+			initial
+				? {
+						ok: initial.players !== null,
+						players: initial.players,
+						text: '',
+						control_server: null,
+						ts: 0
+					}
+				: null
+		)
+	);
 	$effect(() => subscribeStatus((next) => (status = next)));
 
 	let online = $derived(status?.ok === true);

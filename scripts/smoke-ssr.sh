@@ -103,6 +103,73 @@ if [ "$fail" -ne 0 ]; then
 	exit 1
 fi
 
+# Every page needs a card of its own and a description of the site: a link to
+# /events used to unfurl with the same picture as a link to /builds, and a page
+# said nothing about what the site is.
+og_check() {
+	local path="$1" want="$2"
+	curl -fsS -m 15 "http://127.0.0.1:$SITE_PORT$path" \
+		| grep -q "og:image\" content=\"https://commonwealth.ydns.eu/og/$want.jpg\"" \
+		|| { echo "FAIL $path does not advertise og/$want.jpg" >&2; exit 1; }
+}
+for spec in "/=home" "/play=play" "/server=server" "/events=events" "/builds=builds" \
+	"/news=news" "/agents=agents" "/missions=missions"; do
+	og_check "${spec%%=*}" "${spec##*=}"
+done
+echo "ok   every section advertises its own Open Graph card"
+
+home_html="$work/home.html"
+curl -fsS -m 15 "http://127.0.0.1:$SITE_PORT/" >"$home_html"
+grep -q '"@type":"WebSite"' "$home_html" \
+	|| { echo "FAIL the home page has no WebSite node" >&2; exit 1; }
+grep -q '"@type":"Organization"' "$home_html" \
+	|| { echo "FAIL the home page has no Organization node" >&2; exit 1; }
+echo "ok   the site describes itself in structured data"
+
+# The player count has to be in the HTML, not only in the panel that fills in
+# after JavaScript: it is the fact a crawler or an assistant will quote.
+grep -qE '(players? in-game right now|player count unavailable right now|nobody in-game)' "$home_html" \
+	|| { echo "FAIL the home page does not state the player count server-side" >&2; exit 1; }
+curl -fsS -m 10 "http://127.0.0.1:$API_PORT/api/players" | grep -q '"players"' \
+	|| { echo "FAIL /api/players did not answer with a count" >&2; exit 1; }
+echo "ok   the player count is server-rendered"
+
+# The events page is server-rendered with titles, descriptions and — since the
+# server now supplies its clock — real instants, so a crawler or a reader without
+# JavaScript still learns when each night is.
+events="$work/events.html"
+curl -fsS -m 15 "http://127.0.0.1:$SITE_PORT/events" >"$events"
+for needle in "Friday Raids" "Challenge matches" "Weekly mercenary" "your own timezone"; do
+	grep -qF "$needle" "$events" \
+		|| { echo "FAIL /events is missing: $needle" >&2; exit 1; }
+done
+echo "ok   /events renders on the server"
+
+# The schedule has to be machine-readable: an instant per card, and an Event per
+# night with the next start and the weekly recurrence.
+python3 - "$events" <<'EVENT_CHECK' || exit 1
+import json, re, sys
+
+html = open(sys.argv[1], encoding="utf-8").read()
+if not re.search(r'<time[^>]+datetime="\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}"', html):
+    raise SystemExit("FAIL /events has no <time datetime> with an offset")
+
+block = re.search(r'<script type="application/ld\+json">(.*?)</script>', html, re.S)
+if not block:
+    raise SystemExit("FAIL /events has no JSON-LD")
+data = json.loads(block.group(1))
+events = [node for node in data.get("@graph", [data]) if node.get("@type") == "Event"]
+if len(events) < 3:
+    raise SystemExit(f"FAIL /events describes {len(events)} Event nodes, expected 3")
+for event in events:
+    if not re.match(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$', event.get("startDate", "")):
+        raise SystemExit(f"FAIL {event.get('name')} has no usable startDate: {event.get('startDate')}")
+    schedule = event.get("eventSchedule") or {}
+    if schedule.get("repeatFrequency") != "P1W" or not schedule.get("byDay"):
+        raise SystemExit(f"FAIL {event.get('name')} has no weekly schedule")
+print("ok   /events describes three weekly Events with real start dates")
+EVENT_CHECK
+
 # Structured data is read by machines that cannot guess: a block that arrived as
 # template source, or as HTML-escaped entities, is a Search Console error rather
 # than a rich result. Parse it here rather than trusting that it looks right.

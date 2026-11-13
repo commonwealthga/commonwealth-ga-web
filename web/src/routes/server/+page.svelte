@@ -4,7 +4,10 @@
 	import Panel from '$lib/components/Panel.svelte';
 	import StatusReadout from '$lib/components/StatusReadout.svelte';
 	import ActivityChart from '$lib/components/ActivityChart.svelte';
+	import { untrack } from 'svelte';
 	import { subscribeStatus, type StatusPayload } from '$lib/live';
+
+	let { data } = $props();
 
 	interface Health {
 		ok: boolean;
@@ -13,8 +16,24 @@
 		site_db: boolean;
 	}
 
-	let status = $state<StatusPayload | null>(null);
+	// Seeded from the server so the count is in the HTML; the stream then owns it.
+	let status = $state<StatusPayload | null>(
+		untrack(() =>
+			data.count.players === null
+				? null
+				: {
+						ok: true,
+						players: data.count.players,
+						text: data.count.text,
+						control_server: null,
+						ts: data.count.ts
+					}
+		)
+	);
 	$effect(() => subscribeStatus((next) => (status = next)));
+
+	/// What the server already knew when it rendered this page.
+	const initial = untrack(() => data.count);
 
 	let health = $state<Health | null>(null);
 	let healthFailed = $state(false);
@@ -102,7 +121,7 @@
 
 <div class="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
 	<Panel label="Players online" meta="live" bodyClass="flex min-h-[10rem] items-center">
-		<StatusReadout size="xl" />
+		<StatusReadout size="xl" {initial} />
 	</Panel>
 
 	<div class="flex flex-col gap-4">

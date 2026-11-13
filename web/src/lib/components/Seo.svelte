@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { OG_IMAGE, SITE_NAME, SITE_ORIGIN } from '$lib/site';
+	import { OG_IMAGE, SITE_NAME, SITE_ORIGIN, ogImageFor, siteSchema } from '$lib/site';
 
 	/**
 	 * Everything a crawler or a link unfurler needs, per page.
@@ -13,13 +13,14 @@
 		title,
 		description,
 		type = 'website',
-		image = OG_IMAGE,
+		image = '',
 		noindex = false,
 		structuredData
 	}: {
 		title: string;
 		description: string;
 		type?: string;
+		/** A card of its own — a build's screenshot, say. Defaults to the section's. */
 		image?: string;
 		noindex?: boolean;
 		/** schema.org JSON-LD for this page, if it has any. */
@@ -27,7 +28,8 @@
 	} = $props();
 
 	const canonical = $derived(`${SITE_ORIGIN}${page.url.pathname}`);
-	const imageUrl = $derived(`${SITE_ORIGIN}${image}`);
+	// The section's card unless the page brought its own.
+	const imageUrl = $derived(`${SITE_ORIGIN}${image || ogImageFor(page.url.pathname)}`);
 
 	/**
 	 * JSON-LD has to be built as a string and injected as markup.
@@ -38,11 +40,27 @@
 	 * ("Missing '}' or object member name"). The `<` escape keeps a value from
 	 * closing the script early; it is the same character in JSON.
 	 */
-	const jsonLd = $derived(
-		structuredData
-			? `<script type="application/ld+json">${JSON.stringify(structuredData).replace(/</g, '\\u003c')}<\/script>`
-			: ''
-	);
+	/**
+	 * One graph per page: what this site is, plus whatever the page itself has to
+	 * say. A page that brought its own `@context` (or a `@graph`) is folded in
+	 * rather than emitted twice, so there is one script and one model.
+	 */
+	const jsonLd = $derived.by(() => {
+		const page: Record<string, unknown>[] = [];
+		if (structuredData) {
+			const own = (structuredData as Record<string, unknown>)['@graph'];
+			if (Array.isArray(own)) {
+				page.push(...(own as Record<string, unknown>[]));
+			} else {
+				const { '@context': _context, ...rest } = structuredData as Record<string, unknown>;
+				page.push(rest);
+			}
+		}
+
+		const graph = { '@context': 'https://schema.org', '@graph': [...siteSchema(), ...page] };
+		const json = JSON.stringify(graph).replace(/</g, '\\u003c');
+		return `<script type="application/ld+json">${json}<\/script>`;
+	});
 </script>
 
 <svelte:head>

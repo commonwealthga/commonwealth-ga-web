@@ -30,6 +30,41 @@ pub async fn status(State(state): State<Arc<AppState>>) -> Response {
     }
 }
 
+/// `GET /api/players` — the same reading as `/api/status`, as JSON.
+///
+/// The text endpoint stays exactly as it is (the bot prints it verbatim). This is
+/// for the site itself: it renders the number into the page server-side, so the
+/// count is in the HTML a crawler receives rather than appearing only once the
+/// browser has opened a live stream. The shape mirrors the SSE payload so the
+/// client needs no second model.
+pub async fn players(State(state): State<Arc<AppState>>) -> Response {
+    let payload = match state.status.current().await {
+        Ok(status) => StatusPayload::from_status(&status),
+        Err(err) => {
+            tracing::warn!(error = %err, "players query failed");
+            // Same degradation as the text endpoint: "down" is not "zero".
+            StatusPayload::unavailable()
+        }
+    };
+
+    // Short cache: a crawl or a burst of readers must not become a stampede on
+    // the game database, and a count twenty seconds old is still a live count.
+    (
+        [
+            (header::CONTENT_TYPE, "application/json; charset=utf-8"),
+            (header::CACHE_CONTROL, "public, max-age=20"),
+        ],
+        Json(json!({
+            "ok": payload.ok,
+            "players": payload.players,
+            "text": payload.text,
+            "control_server": payload.control_server,
+            "ts": payload.ts,
+        })),
+    )
+        .into_response()
+}
+
 fn plain_text(status: StatusCode, body: impl Into<String>) -> Response {
     (
         status,

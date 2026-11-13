@@ -2,10 +2,18 @@
 User-agent: *
 Allow: /
 # The API answers JSON to the site and the Discord bot; there is nothing here
-# for a crawler, and the export endpoint is token-gated.
+# for a crawler, and the export endpoint is token-gated. The two status readings
+# are the exception: they are public, tiny, and the honest answer to "how many
+# people are playing", so they are allowed explicitly.
+Allow: /api/status
+Allow: /api/players
 Disallow: /api/
 Disallow: /db-export/
 # Downloads are large binaries, not pages.
 Disallow: /files/
 
 Sitemap: https://commonwealth.ydns.eu/sitemap.xml
+
+# A plain-language summary of the site for language models and assistants. Not a
+# crawler directive — a crawler that ignores it has lost nothing.
+# LLMs: https://commonwealth.ydns.eu/llms.txt
