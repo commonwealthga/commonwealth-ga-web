@@ -24,7 +24,7 @@
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
-use image::{DynamicImage, ExtendedColorType, ImageEncoder, ImageFormat, ImageReader, Limits};
+use image::{DynamicImage, ImageFormat, ImageReader, Limits};
 use sha2::{Digest, Sha256};
 
 /// What we will read. A screenshot is a few hundred kilobytes; four megabytes is
@@ -42,6 +42,12 @@ pub const MAX_STORED_BYTES: usize = 3 * 1024 * 1024;
 /// 1.5 MB full-size screenshot in a thumbnail is most of a phone's data budget
 /// for one screen.
 pub const TILE_WIDTH: u32 = 480;
+/// Lossy WebP quality for a stored full-size derivative. High enough that the
+/// small labels in a skill-tree screenshot stay legible at 1:1.
+pub const QUALITY: f32 = 88.0;
+/// The tile is shown at roughly 220 CSS pixels, so it can be encoded a little
+/// harder than the image someone opened deliberately.
+pub const TILE_QUALITY: f32 = 85.0;
 const WIDTHS: [u32; 3] = [MAX_WIDTH, 1_280, 1_024];
 
 /// Uploads allowed per account per window. Generous for a person posting builds,
@@ -160,7 +166,7 @@ pub fn sanitise(input: &[u8]) -> Result<Sanitised, ImageError> {
         } else {
             decoded.clone()
         };
-        let bytes = encode_webp(&scaled)?;
+        let bytes = encode_webp(&scaled, QUALITY)?;
         if bytes.len() <= MAX_STORED_BYTES {
             return Ok(Sanitised {
                 hash: hex(&bytes),
@@ -174,18 +180,27 @@ pub fn sanitise(input: &[u8]) -> Result<Sanitised, ImageError> {
     Err(ImageError::TooLargeAfterEncode)
 }
 
-fn encode_webp(image: &DynamicImage) -> Result<Vec<u8>, ImageError> {
-    let mut out = Vec::new();
-    let encoder = image::codecs::webp::WebPEncoder::new_lossless(&mut out);
-    encoder
-        .write_image(
-            image.as_bytes(),
-            image.width(),
-            image.height(),
-            ExtendedColorType::from(image.color()),
-        )
-        .map_err(|_| ImageError::Undecodable)?;
-    Ok(out)
+/// Encode a derivative as **lossy** WebP.
+///
+/// The bytes a player uploaded are decoded here and never stored, so the encoder's
+/// only job is bytes per pixel. It used to be lossless — the `image` crate offers
+/// nothing else — which cost 179 kB for a 480px tile and 1.4 MB for a full
+/// screenshot. At these qualities the same screenshots are 5-10x smaller and
+/// indistinguishable, including the small "0/1" labels on a skill tree.
+///
+/// Alpha is only fed to the encoder when the image has it: an opaque screenshot
+/// re-encoded through an alpha channel pays for a plane of nothing.
+fn encode_webp(image: &DynamicImage, quality: f32) -> Result<Vec<u8>, ImageError> {
+    let encoded = if image.color().has_alpha() {
+        let rgba = image.to_rgba8();
+        let encoder = webp::Encoder::from_rgba(rgba.as_raw(), rgba.width(), rgba.height());
+        encoder.encode(quality)
+    } else {
+        let rgb = image.to_rgb8();
+        let encoder = webp::Encoder::from_rgb(rgb.as_raw(), rgb.width(), rgb.height());
+        encoder.encode(quality)
+    };
+    Ok(encoded.to_vec())
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -255,7 +270,7 @@ pub fn ensure_tile(dir: &Path, hash: &str) -> std::io::Result<bool> {
     } else {
         decoded
     };
-    let bytes = encode_webp(&scaled).map_err(|_| {
+    let bytes = encode_webp(&scaled, TILE_QUALITY).map_err(|_| {
         std::io::Error::new(std::io::ErrorKind::InvalidData, "could not encode the tile")
     })?;
 
@@ -263,6 +278,74 @@ pub fn ensure_tile(dir: &Path, hash: &str) -> std::io::Result<bool> {
     std::fs::write(&temp, &bytes)?;
     std::fs::rename(&temp, &tile)?;
     Ok(true)
+}
+
+/// The stamp that says what is on disk: which encoder, at which qualities.
+fn encoder_stamp() -> String {
+    format!("webp-lossy-full{QUALITY}-tile{TILE_QUALITY}")
+}
+
+/// Bring stored images up to the current encoder, once.
+///
+/// Stored files are content-addressed by the digest of the *upload*, so a file's
+/// name says nothing about how it was encoded — there is no way to tell a lossless
+/// derivative from a lossy one by looking. A stamp file in the image directory
+/// records which settings produced what is there; when it does not match, every
+/// stored image is decoded and written again, and its tile removed so the next
+/// sweep rebuilds it at the current quality.
+///
+/// Note on names: a stored file is named for the digest of the derivative the
+/// upload produced, and re-encoding rewrites the bytes underneath that name. The
+/// name therefore identifies the *upload*, not the current file's content — which
+/// is all it is used for (serving, and validating a request's path). Uploads made
+/// from here on name themselves after their lossy bytes as before, so the
+/// identity holds exactly for everything not covered by this one-off pass.
+///
+/// Returns how many images were rewritten. Idempotent: a second call is a stat.
+pub fn reencode_stored(dir: &Path) -> std::io::Result<usize> {
+    let stamp_path = dir.join(".encoder");
+    let stamp = encoder_stamp();
+    if std::fs::read_to_string(&stamp_path).is_ok_and(|found| found.trim() == stamp) {
+        return Ok(0);
+    }
+
+    let mut rewritten = 0;
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        // Tiles are rebuilt from the full image; only the full images are re-encoded here.
+        if !name.ends_with(".webp") || name.ends_with(".tile.webp") || !name_is_valid(name) {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        // A derivative of a derivative: already ours, decoded the same way.
+        let Some(decoded) = ImageReader::new(Cursor::new(&bytes))
+            .with_guessed_format()
+            .ok()
+            .and_then(|reader| reader.decode().ok())
+        else {
+            continue;
+        };
+        let Ok(encoded) = encode_webp(&decoded, QUALITY) else {
+            continue;
+        };
+        let temp = dir.join(format!("{name}.{}.part", std::process::id()));
+        std::fs::write(&temp, &encoded)?;
+        std::fs::rename(&temp, &path)?;
+        // The tile was made from the old bytes.
+        let _ =
+            std::fs::remove_file(dir.join(format!("{}.tile.webp", name.trim_end_matches(".webp"))));
+        rewritten += 1;
+    }
+
+    let temp = dir.join(format!(".encoder.{}.part", std::process::id()));
+    std::fs::write(&temp, &stamp)?;
+    std::fs::rename(&temp, &stamp_path)?;
+    Ok(rewritten)
 }
 
 /// Accept only the names this module produces. A path, a traversal attempt or a
@@ -284,7 +367,67 @@ pub fn name_is_valid(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use image::{ImageEncoder, Rgba, RgbaImage};
+    use image::{ExtendedColorType, ImageEncoder, Rgba, RgbaImage};
+
+    /// A lossless derivative of a real screenshot was 1.4 MB; the same image lossy
+    /// is a fraction of that, which is the point of the encoder change. Compared
+    /// against a lossless encode of the same pixels rather than a magic number.
+    #[tokio::test]
+    async fn a_stored_image_is_lossy_rather_than_lossless() {
+        let dir = tempfile::TempDir::new().expect("temp");
+        let image = sanitise(&noisy_png(1_200, 800)).expect("accepted");
+        save(dir.path(), &image).await.expect("save");
+        let stored = std::fs::read(dir.path().join(image.file_name())).expect("read");
+
+        let decoded = ImageReader::new(Cursor::new(&stored))
+            .with_guessed_format()
+            .expect("format")
+            .decode()
+            .expect("decode");
+        let rgba = decoded.to_rgba8();
+        let lossless =
+            webp::Encoder::from_rgba(rgba.as_raw(), rgba.width(), rgba.height()).encode_lossless();
+
+        assert!(
+            stored.len() * 3 < lossless.len(),
+            "stored {} bytes, lossless would be {} — the encoder is not lossy",
+            stored.len(),
+            lossless.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn stored_images_are_reencoded_once_and_the_tiles_rebuilt() {
+        let dir = tempfile::TempDir::new().expect("temp");
+        let image = sanitise(&noisy_png(1_200, 800)).expect("accepted");
+        save(dir.path(), &image).await.expect("save");
+        assert!(ensure_tile(dir.path(), &image.hash).expect("tile"));
+        let before = std::fs::read(dir.path().join(image.file_name())).expect("full");
+
+        // No stamp yet: every stored image is rewritten, and its tile dropped so
+        // the sweep that follows rebuilds it from the new bytes.
+        assert_eq!(reencode_stored(dir.path()).expect("reencode"), 1);
+        let after = std::fs::read(dir.path().join(image.file_name())).expect("full");
+        assert!(!dir.path().join(image.tile_file_name()).exists());
+        assert!(
+            after.len() <= before.len(),
+            "re-encoding grew the file: {} -> {}",
+            before.len(),
+            after.len()
+        );
+
+        // Still a readable image, at the same size.
+        let decoded = ImageReader::new(Cursor::new(&after))
+            .with_guessed_format()
+            .expect("format")
+            .decode()
+            .expect("decode");
+        assert_eq!(decoded.width(), 1_200);
+
+        // And it only happens once.
+        assert_eq!(reencode_stored(dir.path()).expect("second run"), 0);
+        assert!(std::fs::read_to_string(dir.path().join(".encoder")).is_ok());
+    }
 
     #[test]
     fn the_tile_url_is_the_full_url_with_a_tile_suffix() {

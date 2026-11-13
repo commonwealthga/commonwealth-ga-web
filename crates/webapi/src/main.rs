@@ -67,6 +67,13 @@ async fn main() -> anyhow::Result<()> {
         if let Err(err) = guides::store::migrate(site).await {
             tracing::warn!(error = %err, "could not prepare the guides tables");
         }
+        // Re-encode anything stored under older encoder settings first, so the
+        // tiles made below are built from the current bytes rather than from a
+        // derivative that is about to be replaced. A no-op after the first start.
+        if let Err(err) = guides::images::reencode_stored(&cfg.images_dir) {
+            tracing::warn!(error = %err, "could not re-encode stored build images");
+        }
+
         // Tiles arrived after the first builds were posted, so fill in the ones
         // that predate them. Bounded: a handful per start, and a no-op once done.
         match guides::store::image_hashes_missing_tiles(site, &cfg.images_dir, 50).await {
