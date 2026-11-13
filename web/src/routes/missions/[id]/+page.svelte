@@ -145,6 +145,7 @@
 	{#if detail.kind === 'pvp'}
 		<PvpScoreboard
 			participants={detail.participants}
+			teams={detail.teams}
 			balance={detail.balance}
 			winningTaskForce={detail.winning_task_force}
 			mmrEngine={detail.mmr_engine}
@@ -164,8 +165,8 @@
 				{#if detail.kind === 'pvp'}
 					<li>
 						<span class="text-ink">MMR</span> — the rating each player carried into the match, not
-						after it. The Δ column compares winners against losers per class, while the small
-						number beside each rating in the matchups is what this match gained or lost.
+						after it. The Δ column is what this match did to that rating, and the matchups
+						below pair the two sides class by class — when there was a winning side.
 					</li>
 				{/if}
 				<li>

@@ -8,15 +8,17 @@
 	 * context sits above it. Every per-player column the PvE archive shows is
 	 * still here — nothing is dropped, the emphasis just moves.
 	 */
-	import type { Balance, Participant } from '$lib/match';
+	import type { Balance, Participant, TeamSummary } from '$lib/match';
 
 	let {
 		participants,
+		teams = [],
 		balance,
 		winningTaskForce,
 		mmrEngine
 	}: {
 		participants: Participant[];
+		teams?: TeamSummary[];
 		balance: Balance | null;
 		winningTaskForce: number | null;
 		mmrEngine: string | null;
@@ -42,13 +44,51 @@
 		['time_played_seconds', 'Time']
 	];
 
-	const winner = $derived(
-		participants.filter((p) => winningTaskForce !== null && p.task_force === winningTaskForce)
-	);
-	const loser = $derived(
-		participants.filter((p) => winningTaskForce !== null && p.task_force !== winningTaskForce)
-	);
-	const unrated = $derived(winner.length === 0 && loser.length === 0);
+	/**
+	 * How to group the table.
+	 *
+	 * A decided match reads as winners and losers. One without a winner — a
+	 * stalemate, or a match that never resolved — has no such split, and this used
+	 * to fall through to "no scoreboard recorded" while five players' stats sat in
+	 * the payload: a 1v1 duel that ended STALEMATE showed nothing at all, even
+	 * though it was somebody's highest-kill match on record. The stats are recorded
+	 * either way, so group by side instead of by result.
+	 */
+	const sides = $derived.by(() => {
+		if (winningTaskForce !== null) {
+			return [
+				{
+					key: -1,
+					title: 'Winning side',
+					tone: 'text-ember',
+					rows: participants.filter((p) => p.task_force === winningTaskForce)
+				},
+				{
+					key: -2,
+					title: 'Losing side',
+					tone: 'text-steel',
+					rows: participants.filter((p) => p.task_force !== winningTaskForce)
+				}
+			];
+		}
+
+		const bySide = teams.map((team) => ({
+			key: team.task_force,
+			title: team.label,
+			tone: 'text-dim',
+			rows: participants.filter((p) => p.task_force === team.task_force)
+		}));
+		const loose = participants.filter(
+			(p) => p.task_force === null || p.task_force === undefined
+		);
+		if (loose.length > 0) {
+			bySide.push({ key: 0, title: 'Unassigned', tone: 'text-dim', rows: loose });
+		}
+		return bySide;
+	});
+
+	/** Nothing was recorded at all — which is different from nobody winning. */
+	const empty = $derived(participants.length === 0);
 
 	// The analyst's view: pair players by class, best-rated against best-rated,
 	// so a lopsided class matchup is visible as a big delta.
@@ -60,8 +100,11 @@
 				.filter((p) => (p.mmr_class ?? p.classes[0]) === cls)
 				.sort((a, b) => (b.mmr ?? 0) - (a.mmr ?? 0));
 
-		const winBy = byClass(winner);
-		const loseBy = byClass(loser);
+		// Only a decided match can be read as one side against the other.
+		const won = participants.filter((p) => p.task_force === winningTaskForce);
+		const lost = participants.filter((p) => p.task_force !== winningTaskForce);
+		const winBy = byClass(won);
+		const loseBy = byClass(lost);
 		const pairs: { cls: string; win: Participant | null; lose: Participant | null }[] = [];
 
 		for (const cls of CLASS_ORDER) {
@@ -104,12 +147,12 @@
 		</div>
 	{/if}
 
-	{#if !unrated}
-		{#each [{ title: 'Winning side', rows: winner }, { title: 'Losing side', rows: loser }] as side (side.title)}
+	{#if !empty}
+		{#each sides as side (side.key)}
 			{#if side.rows.length > 0}
 				<div class="panel-ticks border border-line/90 bg-panel/50">
 					<div class="flex items-center justify-between border-b border-line/80 px-4 py-2.5">
-						<span class="label {side.title === 'Winning side' ? 'text-ember' : 'text-steel'}">
+						<span class="label {side.tone}">
 							{side.title}
 						</span>
 						<span class="label text-faint">{side.rows.length} agents</span>
