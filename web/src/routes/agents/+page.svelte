@@ -20,7 +20,8 @@
 	// it, and every change goes back through the URL.
 	const initial = untrack(() => data.directory);
 	let query = $state(initial?.query ?? readText('q'));
-	let page = $state((initial?.page ?? readPage()) - 1);
+	// `initial.page` is the API's own zero-based index; the URL's is not.
+	let page = $state(initial ? initial.page : readPage() - 1);
 
 	trackScroll();
 	afterNavigate(() => {

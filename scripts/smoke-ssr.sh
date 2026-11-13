@@ -49,9 +49,31 @@ for port in "$API_PORT" "$SITE_PORT"; do
 	fi
 done
 
+# A live-DB fixture: thirty players, newest first. `/agents` pages at 24, so this
+# spans two pages and the URL's page number can be checked against the rows.
+python3 - "$work/server.db" <<'AGENT_FIXTURE'
+import sqlite3, sys
+
+with sqlite3.connect(sys.argv[1]) as db:
+    db.executescript(
+        """
+        CREATE TABLE ga_instances (instance_id INTEGER PRIMARY KEY, state TEXT, queue_id INTEGER, started_at INTEGER);
+        CREATE TABLE ga_users (id INTEGER PRIMARY KEY, username TEXT);
+        CREATE TABLE ga_match_player_stats (instance_id INTEGER, user_id INTEGER, damage_dealt INTEGER);
+        CREATE TABLE ga_instance_players (instance_id INTEGER, user_id INTEGER, left_at INTEGER);
+        """
+    )
+    for index in range(30):
+        # Descending start times, so Agent 01 sorts first and Agent 30 last.
+        db.execute("INSERT INTO ga_instances VALUES (?, 'STOPPED', 1, ?)", (index + 1, 1_000_000 - index))
+        db.execute("INSERT INTO ga_users VALUES (?, ?)", (index + 1, f"Agent {index + 1:02d}"))
+        db.execute("INSERT INTO ga_match_player_stats VALUES (?, ?, 100)", (index + 1, index + 1))
+AGENT_FIXTURE
+
 echo "== api"
 WEB_BIND="127.0.0.1:$API_PORT" \
 	WEB_DB_SITE="$work/site.db" \
+	WEB_DB_LIVE="$work/server.db" \
 	"$API_BIN" >"$work/api.log" 2>&1 &
 api_pid=$!
 wait_for "http://127.0.0.1:$API_PORT/api/news?limit=1" "the API"
@@ -117,6 +139,29 @@ for spec in "/=home" "/play=play" "/server=server" "/events=events" "/builds=bui
 	og_check "${spec%%=*}" "${spec##*=}"
 done
 echo "ok   every section advertises its own Open Graph card"
+
+# `/api/agents` pages from zero, the URL from one. Getting that wrong shipped a
+# directory whose first page showed the second page's rows while the paginator
+# said "page 1", so the two are compared here rather than assumed.
+agents_page() {
+	curl -fsS -m 15 "http://127.0.0.1:$SITE_PORT/agents$1" \
+		| python3 -c '
+import re, sys
+html = sys.stdin.read()
+rows = re.findall(r"/agents/(\d+)", html)
+label = re.search(r"page\s*(?:<!--[^>]*-->)?\s*(\d+)", re.sub(r"<[^>]+>", " ", html))
+first = rows[0] if rows else "-"
+number = label.group(1) if label else "?"
+print(first + "|" + number)
+'
+}
+first=$(agents_page "")
+second=$(agents_page "?page=2")
+[ "${first%%|*}" = "1" ] && [ "${first##*|}" = "1" ] \
+	|| { echo "FAIL /agents page 1 rendered agent ${first%%|*}, labelled ${first##*|}" >&2; exit 1; }
+[ "${second%%|*}" = "25" ] && [ "${second##*|}" = "2" ] \
+	|| { echo "FAIL /agents?page=2 rendered agent ${second%%|*}, labelled ${second##*|}" >&2; exit 1; }
+echo "ok   /agents pages from the page the URL asks for"
 
 home_html="$work/home.html"
 curl -fsS -m 15 "http://127.0.0.1:$SITE_PORT/" >"$home_html"

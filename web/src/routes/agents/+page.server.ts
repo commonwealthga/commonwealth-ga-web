@@ -23,9 +23,12 @@ export const load = async ({
 	url: URL;
 }) => {
 	const query = url.searchParams.get('q') ?? '';
-	const page = Math.max(1, Number(url.searchParams.get('page') ?? '1') || 1);
+	// The URL is human-facing and pages from one; `/api/agents` pages from zero,
+	// as its own `page` field reports. Passing the URL's number straight through
+	// asked for the *second* page of rows while the paginator still said 1.
+	const requested = Math.max(1, Number(url.searchParams.get('page') ?? '1') || 1);
 
-	const params = new URLSearchParams({ limit: '24', page: String(page) });
+	const params = new URLSearchParams({ limit: '24', page: String(requested - 1) });
 	if (query.trim()) params.set('q', query.trim());
 
 	// A directory that cannot be read is not an error page: the client retries and
