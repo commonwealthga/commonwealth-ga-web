@@ -19,7 +19,6 @@
 	 * is, that it is free, and who runs it. `Seo` turns this into the script tag.
 	 */
 	const gameData = {
-		'@context': 'https://schema.org',
 		'@type': 'VideoGame',
 		name: 'Global Agenda',
 		alternateName: 'The Commonwealth — Global Agenda community server',
@@ -28,14 +27,10 @@
 		playMode: ['Cooperative', 'MultiPlayer'],
 		description:
 			'Community-run Global Agenda server with an active playerbase: the 2010 team shooter Hi-Rez shut down in 2018, running again with everything unlocked.',
-		url: 'https://commonwealth.ydns.eu/',
+		url: `${SITE_ORIGIN}/`,
 		image: `${SITE_ORIGIN}/og/home.jpg`,
-		publisher: {
-			'@type': 'Organization',
-			name: 'The Commonwealth',
-			url: 'https://commonwealth.ydns.eu/',
-			sameAs: ['https://discord.gg/CqACf4qArk', 'https://github.com/kithanakodah/cw-globalagenda-ksp']
-		},
+		// The site's own nodes already describe the publisher; this points at them.
+		publisher: { '@id': `${SITE_ORIGIN}/#organization` },
 		offers: { '@type': 'Offer', price: '0', priceCurrency: 'GBP' }
 	};
 
@@ -86,6 +81,36 @@
 			body: 'Friday raids, Saturday challenge matches, Sunday mercenary night. Fixed times, announced in Discord, shown on this site in your own timezone.'
 		}
 	];
+
+	/**
+	 * "Why play here", as an enumerable list.
+	 *
+	 * The six points are the most quotable thing on the site — concrete claims a
+	 * reader (or an assistant answering "is this server worth playing?") can lift
+	 * straight out. Saying so in the graph is what lets a parser treat them as six
+	 * attributes of one thing rather than six loose paragraphs.
+	 *
+	 * Each `ListItem` carries the same words the page shows: nothing here is
+	 * invented for machines, which is the whole point of structured data.
+	 */
+	const whyPlay = {
+		'@type': 'ItemList',
+		name: 'Why play on The Commonwealth',
+		description: `Six reasons players stay on this Global Agenda server: ${differences.length} points, in the order the page shows them.`,
+		numberOfItems: differences.length,
+		itemListOrder: 'https://schema.org/ItemListOrderAscending',
+		itemListElement: differences.map((item, index) => ({
+			'@type': 'ListItem',
+			position: index + 1,
+			name: item.title,
+			description: item.body
+		}))
+	};
+
+	const structuredData = {
+		'@context': 'https://schema.org',
+		'@graph': [gameData, whyPlay]
+	};
 
 	const projects = [
 		{
@@ -147,7 +172,7 @@
 	<Seo
 		title="Global Agenda community server | The Commonwealth"
 		description="A free Global Agenda private server with an active playerbase. Start at level 50 with everything unlocked, play endgame PvE and PvP, and join weekly events."
-		structuredData={gameData}
+		{structuredData}
 	/>
 </svelte:head>
 

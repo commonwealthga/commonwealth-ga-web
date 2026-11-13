@@ -124,6 +124,27 @@ grep -q '"@type":"WebSite"' "$home_html" \
 	|| { echo "FAIL the home page has no WebSite node" >&2; exit 1; }
 grep -q '"@type":"Organization"' "$home_html" \
 	|| { echo "FAIL the home page has no Organization node" >&2; exit 1; }
+
+# The six reasons are the most quotable thing on the site; they are enumerated in
+# the graph so a parser can treat them as one list rather than six paragraphs.
+python3 - "$home_html" <<'LIST_CHECK' || exit 1
+import json, re, sys
+
+html = open(sys.argv[1], encoding="utf-8").read()
+data = json.loads(re.search(r'<script type="application/ld\+json">(.*?)</script>', html, re.S).group(1))
+lists = [n for n in data.get("@graph", []) if n.get("@type") == "ItemList"]
+if not lists:
+    raise SystemExit("FAIL the home page has no ItemList")
+items = lists[0].get("itemListElement", [])
+if len(items) != 6 or lists[0].get("numberOfItems") != 6:
+    raise SystemExit(f"FAIL the reasons list has {len(items)} items, expected 6")
+for position, item in enumerate(items, start=1):
+    if item.get("position") != position or not item.get("name") or not item.get("description"):
+        raise SystemExit(f"FAIL item {position} is incomplete: {item}")
+    if item["name"] not in html:
+        raise SystemExit(f"FAIL {item['name']!r} is in the graph but not on the page")
+print("ok   the six reasons are enumerated and match the page")
+LIST_CHECK
 echo "ok   the site describes itself in structured data"
 
 # The player count has to be in the HTML, not only in the panel that fills in
