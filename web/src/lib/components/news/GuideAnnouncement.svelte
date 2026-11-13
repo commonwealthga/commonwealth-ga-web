@@ -32,7 +32,7 @@
 	<a href={guide.path} class="flex flex-col gap-4 p-4 focus:outline-none sm:flex-row sm:items-center">
 		{#if guide.image_url}
 			<img
-				src={guide.image_url}
+				src={guide.image_tile_url ?? guide.image_url}
 				alt="Skill tree for the {guide.class_label} build"
 				loading="lazy"
 				class="w-full border border-line/60 object-cover sm:w-56"

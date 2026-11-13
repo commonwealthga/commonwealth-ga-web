@@ -102,6 +102,21 @@ impl Sanitised {
     }
 }
 
+/// The tile variant of a stored image's URL: `/images/<hash>.webp` →
+/// `/images/<hash>.tile.webp`.
+///
+/// Used where the image is known only by its served URL — the news feed's guide
+/// pointer — so lists ask for the tile instead of pulling a full-size screenshot
+/// into a thumbnail. Anything already a tile, or not a stored image, is returned
+/// unchanged.
+pub fn tile_url(url: &str) -> Option<String> {
+    if url.ends_with(".tile.webp") {
+        return Some(url.to_string());
+    }
+    url.strip_suffix(".webp")
+        .map(|base| format!("{base}.tile.webp"))
+}
+
 /// Decode, downscale, re-encode. Nothing from the input is carried over.
 pub fn sanitise(input: &[u8]) -> Result<Sanitised, ImageError> {
     if input.is_empty() {
@@ -270,6 +285,22 @@ pub fn name_is_valid(name: &str) -> bool {
 mod tests {
     use super::*;
     use image::{ImageEncoder, Rgba, RgbaImage};
+
+    #[test]
+    fn the_tile_url_is_the_full_url_with_a_tile_suffix() {
+        let hash = "a".repeat(64);
+        assert_eq!(
+            tile_url(&format!("/images/{hash}.webp")),
+            Some(format!("/images/{hash}.tile.webp"))
+        );
+        // Already a tile: unchanged, not doubled.
+        assert_eq!(
+            tile_url(&format!("/images/{hash}.tile.webp")),
+            Some(format!("/images/{hash}.tile.webp"))
+        );
+        // Not a stored image: nothing to derive.
+        assert_eq!(tile_url("https://example.com/photo.jpg"), None);
+    }
 
     fn png(width: u32, height: u32) -> Vec<u8> {
         let mut image = RgbaImage::new(width, height);

@@ -126,6 +126,9 @@ pub struct GuidePointer {
     pub path: String,
     pub class_label: Option<&'static str>,
     pub image_url: Option<String>,
+    /// The same screenshot at tile width. A feed thumbnail has no business
+    /// pulling a full-size screenshot down the wire.
+    pub image_tile_url: Option<String>,
 }
 
 impl PostView {
@@ -178,6 +181,10 @@ impl PostView {
                 path: guide.path.clone(),
                 class_label: guide.class_label,
                 image_url: guide.image_url.clone(),
+                image_tile_url: guide
+                    .image_url
+                    .as_deref()
+                    .and_then(crate::guides::images::tile_url),
             }),
         }
     }

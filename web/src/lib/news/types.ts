@@ -8,6 +8,8 @@ export interface GuidePointer {
 	path: string;
 	class_label: string | null;
 	image_url: string | null;
+	/** The same screenshot at tile width; feed thumbnails use this. */
+	image_tile_url: string | null;
 }
 
 export interface NewsPost {

@@ -462,6 +462,67 @@ async fn a_build_needs_an_image_and_only_its_uploader_may_attach_it() {
     assert!(builds.contains("discord.com/channels/1/2/3"), "{builds}");
 }
 
+/// A feed thumbnail must not pull a full-size screenshot down the wire: 480px
+/// tiles are a fifth of the bytes, and `/news` was showing the 1600px original.
+#[tokio::test]
+async fn the_news_feed_points_at_the_tile_rather_than_the_full_screenshot() {
+    let harness = Harness::new().await;
+    let moderator = harness.session(8, "mod").await;
+    let app = harness.router(Some(
+        harness.live_with_roles(&[(8, "news_moderator")]).await,
+    ));
+    let author = harness.session(9, "builder").await;
+
+    let (_, uploaded) = upload(&app, &author, png(400, 300)).await;
+    let upload: serde_json::Value = serde_json::from_str(&uploaded).expect("json");
+    let image_id = upload["image_id"].as_i64().expect("id");
+    let tile_url = upload["tile_url"].as_str().expect("tile url").to_string();
+    let full_url = upload["url"].as_str().expect("url").to_string();
+
+    let (_, body) = send(
+        &app,
+        json_request(
+            "POST",
+            "/api/guides",
+            Some(&author),
+            serde_json::json!({
+                "category": "build",
+                "title": "Burst assault",
+                "class": "assault",
+                "modes": ["pvp"],
+                "image_id": image_id,
+            }),
+        ),
+    )
+    .await;
+    let id = id_of(&body);
+    send(
+        &app,
+        json_request(
+            "POST",
+            &format!("/api/guides/{id}/approve"),
+            Some(&moderator),
+            serde_json::json!({}),
+        ),
+    )
+    .await;
+
+    let (_, feed) = send(&app, get(None, "/api/news?limit=10")).await;
+    assert!(
+        feed.contains("Burst assault"),
+        "announcement missing: {feed}"
+    );
+    assert!(
+        feed.contains(&format!("\"image_tile_url\":\"{tile_url}\"")),
+        "feed should offer {tile_url}: {feed}"
+    );
+    // The full-size URL is still there for the detail page to use.
+    assert!(
+        feed.contains(&format!("\"image_url\":\"{full_url}\"")),
+        "{feed}"
+    );
+}
+
 #[tokio::test]
 async fn an_uploaded_image_is_reencoded_and_never_served_as_uploaded() {
     let harness = Harness::new().await;
