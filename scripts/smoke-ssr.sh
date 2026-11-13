@@ -109,7 +109,7 @@ fi
 og_check() {
 	local path="$1" want="$2"
 	curl -fsS -m 15 "http://127.0.0.1:$SITE_PORT$path" \
-		| grep -q "og:image\" content=\"https://commonwealth.ydns.eu/og/$want.jpg\"" \
+		| grep -q "og:image\" content=\"https://commonwealth.ydns.eu/og/$want.jpg?v=[0-9]*\"" \
 		|| { echo "FAIL $path does not advertise og/$want.jpg" >&2; exit 1; }
 }
 for spec in "/=home" "/play=play" "/server=server" "/events=events" "/builds=builds" \

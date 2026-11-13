@@ -71,6 +71,15 @@ export function breadcrumbSchema(trail: { name: string; path: string }[]) {
  */
 export const OG_IMAGE = '/og.jpg';
 
+/**
+ * Bumped whenever the cards are re-rendered.
+ *
+ * Unfurlers cache the image by its URL — Discord in particular will keep showing
+ * the card it first fetched — so a new design at the same path is invisible to
+ * every link already shared. The query string makes each set a new URL.
+ */
+const OG_CARD_VERSION = 2;
+
 const OG_CARDS: Record<string, string> = {
 	'/': '/og/home.jpg',
 	'/play': '/og/play.jpg',
@@ -88,7 +97,7 @@ const OG_CARDS: Record<string, string> = {
 
 /** The card for a pathname, matching on the first segment (`/guides/12-x` → guides). */
 export function ogImageFor(pathname: string): string {
-	if (OG_CARDS[pathname]) return OG_CARDS[pathname];
-	const section = '/' + pathname.split('/').filter(Boolean)[0];
-	return OG_CARDS[section] ?? OG_IMAGE;
+	const card =
+		OG_CARDS[pathname] ?? OG_CARDS['/' + pathname.split('/').filter(Boolean)[0]] ?? OG_IMAGE;
+	return `${card}?v=${OG_CARD_VERSION}`;
 }
